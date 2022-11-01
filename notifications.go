@@ -1,7 +1,6 @@
 package grabbit
 
 import (
-	"fmt"
 	"sync"
 )
 
@@ -31,9 +30,12 @@ type Event struct {
 }
 
 func RaiseEvent(ch chan Event, event Event) {
-	// TODO poll test if ch can takes new data then push
-	// otherwise just discard the message
-	fmt.Printf("Got event: %v\n", event)
+	select {
+	case ch <- event:
+	default:
+		// chan has not enough capacity, dump this alert
+		_ = event
+	}
 }
 
 type SafeBool struct {

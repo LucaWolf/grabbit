@@ -14,9 +14,19 @@ import (
 var ConnectionName = "conn.main"
 
 func main() {
+	connStatusChan := make(chan grabbit.Event, 10)
+
+	// await and log any infrastructure notifications
+	go func() {
+		for event := range connStatusChan {
+			fmt.Printf("Got rabbit notification: %v\n", event)
+		}
+	}()
+
 	conn, err := grabbit.NewConnection(
 		"amqp://guest:guest@localhost", amqp.Config{},
 		grabbit.WithConnectionOptionName(ConnectionName),
+		grabbit.WithConnectionOptionNotification(connStatusChan),
 	)
 	if err != nil {
 		log.Fatal(err)

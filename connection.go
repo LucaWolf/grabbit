@@ -95,7 +95,7 @@ func NewConnection(address string, config amqp.Config, optionFuncs ...func(*Conn
 	options := &ConnectionOptions{
 		notifier: make(chan Event, 5),
 		name:     "default",
-		delayer:  DefaultDelayer{Value: 7500 * time.Second},
+		delayer:  DefaultDelayer{Value: 7500 * time.Millisecond},
 	}
 
 	for _, optionFunc := range optionFuncs {
@@ -122,7 +122,7 @@ func NewConnection(address string, config amqp.Config, optionFuncs ...func(*Conn
 		Kind:       EventUp,
 	})
 
-	// start the close notifications monitoring and recovery loop
+	// start the close notifications monitoring and recovery manager
 	go func() {
 		for {
 			retry := 0
