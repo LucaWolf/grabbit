@@ -32,7 +32,7 @@ The [examples](https://github.com/LucaWolf/grabbit/blob/main/examples) folder co
 
 ## Credits
 
-  * _wagslane_ from which I got heavily inspired to do the sane parameters, 
+  * _wagslane_ from whom I got heavily inspired to do the sane parameters, 
       topology maintenance and consumer handlers. Please browse and star [his repository](https://github.com/wagslane/go-rabbitmq).
   * _Emir Ribic_ for his inspiring post that lead me to think about adding a resilience layer 
       for the RabbitMQ client. You may want to [read the full post](https://www.ribice.ba/golang-rabbitmq-client/)
