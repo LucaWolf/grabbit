@@ -19,8 +19,9 @@ type EventType int
 const (
 	EventUp EventType = iota
 	EventDown
-	EventCannotRecoverYet
+	EventCannotEstablish
 	EventBlocked
+	EventUnBlocked
 	EventClosed
 )
 

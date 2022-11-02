@@ -1,6 +1,7 @@
 package grabbit
 
 import (
+	"context"
 	"net/url"
 	"time"
 
@@ -8,127 +9,197 @@ import (
 )
 
 type Connection struct {
-	conn    *amqp.Connection  // core connection
-	address string            // where to connect
-	ready   SafeBool          // is connection usable/available
-	options ConnectionOptions // user parameters
+	baseConn *amqp.Connection   // core connection
+	address  string             // where to connect
+	blocked  SafeBool           // TCP stream status
+	opt      ConnectionOptions  // user parameters
+	cancel   context.CancelFunc // bolted on opt.ctx; aborts the reconnect loop
 }
 
-func (c *Connection) RefreshCredentials() {
-	if c.options.credentials != nil {
-		if secret, err := c.options.credentials.Password(); err == nil {
-			if u, err := url.Parse(c.address); err == nil {
+func (conn *Connection) RefreshCredentials() {
+	if conn.opt.credentials != nil {
+		if secret, err := conn.opt.credentials.Password(); err == nil {
+			if u, err := url.Parse(conn.address); err == nil {
 				u.User = url.UserPassword(u.User.Username(), secret)
-				c.address = u.String()
+				conn.address = u.String()
 			}
 		}
 	}
 }
 
-func (c *Connection) SetReady(value bool) {
-	c.ready.mu.Lock()
-	defer c.ready.mu.Unlock()
+func (c *Connection) IsBlocked() bool {
+	c.blocked.mu.RLock()
+	defer c.blocked.mu.RUnlock()
 
-	c.ready.Value = value
+	return c.blocked.Value
 }
 
-func (c *Connection) Ready() bool {
-	c.ready.mu.RLock()
-	defer c.ready.mu.RUnlock()
-
-	return c.ready.Value
+func (conn *Connection) IsClosed() bool {
+	return conn.baseConn == nil || conn.baseConn.IsClosed()
 }
 
-func (c *Connection) Close() error {
-	return c.conn.Close()
+func (conn *Connection) Close() error {
+	var err error
+
+	if conn.baseConn != nil {
+		err = conn.baseConn.Close()
+	}
+	conn.cancel()
+
+	return err
 }
 
-func NewConnection(address string, config amqp.Config, optionFuncs ...func(*ConnectionOptions)) (*Connection, error) {
+// Connection returns the low level library connection for direct access if so
+// desired. WARN: the result may be nil and needs testing before using
+func (conn *Connection) Connection() *amqp.Connection {
+	return conn.baseConn
+}
 
-	options := &ConnectionOptions{
+func NewConnection(address string, config amqp.Config, optionFuncs ...func(*ConnectionOptions)) *Connection {
+	opt := &ConnectionOptions{
 		notifier: make(chan Event, 5),
 		name:     "default",
 		delayer:  DefaultDelayer{Value: 7500 * time.Millisecond},
+		ctx:      context.Background(),
 	}
 
 	for _, optionFunc := range optionFuncs {
-		optionFunc(options)
+		optionFunc(opt)
 	}
 
 	conn := &Connection{
 		address: address,
-		ready:   SafeBool{},
-		options: *options,
+		opt:     *opt,
 	}
+
+	conn.opt.ctx, conn.cancel = context.WithCancel(opt.ctx)
+
+	go func() {
+		if !connReconnectLoop(conn, config) {
+			return
+		}
+		connManager(conn, config)
+	}()
+
+	return conn
+}
+
+func connMarkBlocked(conn *Connection, value bool) {
+	conn.blocked.mu.Lock()
+	defer conn.blocked.mu.Unlock()
+
+	event := Event{
+		SourceType: CliConnection,
+		SourceName: conn.opt.name,
+		Kind:       EventUnBlocked,
+	}
+	if value {
+		event.Kind = EventBlocked
+	}
+	RaiseEvent(conn.opt.notifier, event)
+
+	conn.blocked.Value = value
+}
+
+func connDial(conn *Connection, config amqp.Config) bool {
+	event := Event{
+		SourceType: CliConnection,
+		SourceName: conn.opt.name,
+		Kind:       EventUp,
+	}
+	connected := true
 
 	conn.RefreshCredentials()
 
-	link, err := amqp.DialConfig(conn.address, config)
-	if err != nil {
-		return nil, err
+	conn.baseConn, event.Err = amqp.DialConfig(conn.address, config)
+	if event.Err != nil {
+		event.Kind = EventCannotEstablish
+		connected = false
 	}
 
-	conn.conn = link
-	RaiseEvent(conn.options.notifier, Event{
-		SourceType: CliConnection,
-		SourceName: conn.options.name,
-		Kind:       EventUp,
-	})
+	// async
+	RaiseEvent(conn.opt.notifier, event)
+	// sync
+	if connected && conn.opt.cbUp != nil {
+		conn.opt.cbUp(conn.opt.name)
+	}
 
-	// start the close notifications monitoring and recovery manager
-	go func() {
-		for {
-			retry := 0
-			// TODO also monitor the block notifications
-			err, chOpen := <-conn.conn.NotifyClose(make(chan *amqp.Error))
+	return connected
+}
 
-			conn.SetReady(false)
-			RaiseEvent(conn.options.notifier, Event{
+func connNotifyCloseChan(conn *Connection) chan *amqp.Error {
+	if conn.baseConn == nil {
+		return nil
+	} else {
+		return conn.baseConn.NotifyClose(make(chan *amqp.Error))
+	}
+}
+
+func connNotifyBlockedChan(conn *Connection) chan amqp.Blocking {
+	if conn.baseConn == nil {
+		return nil
+	} else {
+		return conn.baseConn.NotifyBlocked(make(chan amqp.Blocking))
+	}
+}
+
+func connManager(conn *Connection, config amqp.Config) {
+	for {
+		select {
+		case <-conn.opt.ctx.Done():
+			return
+		case blk := <-connNotifyBlockedChan(conn):
+			connMarkBlocked(conn, blk.Active)
+			_ = blk
+		case err, ok := <-connNotifyCloseChan(conn):
+			// async
+			RaiseEvent(conn.opt.notifier, Event{
 				SourceType: CliConnection,
-				SourceName: conn.options.name,
+				SourceName: conn.opt.name,
 				Kind:       EventDown,
 				Err:        err,
 			})
+			// sync
+			if conn.opt.cbDown != nil && !conn.opt.cbDown(conn.opt.name, err) {
+				return
+			}
 
-			if !chOpen {
-				RaiseEvent(conn.options.notifier, Event{
+			if !ok {
+				conn.baseConn = nil
+				RaiseEvent(conn.opt.notifier, Event{
 					SourceType: CliConnection,
-					SourceName: conn.options.name,
+					SourceName: conn.opt.name,
 					Kind:       EventClosed,
 				})
-
-				// graceful close by upper layer, no need to reconnect
-				if err == nil {
-					break
-				}
 			}
 
-			for {
-				retry = (retry + 1) % 0xFF
-				<-time.After(conn.options.delayer.Delay(retry))
-
-				conn.RefreshCredentials()
-
-				if link, err := amqp.DialConfig(conn.address, config); err != nil {
-					RaiseEvent(conn.options.notifier, Event{
-						SourceType: CliConnection,
-						SourceName: conn.options.name,
-						Kind:       EventCannotRecoverYet,
-						Err:        err,
-					})
-				} else {
-					conn.conn = link
-					conn.SetReady(true)
-					RaiseEvent(conn.options.notifier, Event{
-						SourceType: CliConnection,
-						SourceName: conn.options.name,
-						Kind:       EventUp,
-					})
-					break
-				}
+			// no err means gracefully closed on demand
+			if !(err == nil || connReconnectLoop(conn, config)) {
+				return
 			}
 		}
-	}()
+	}
+}
 
-	return conn, nil
+func connReconnectLoop(conn *Connection, config amqp.Config) bool {
+	retry := 0
+
+	for {
+		retry = (retry + 1) % 0xFFFF
+
+		// sync
+		if conn.opt.cbReconnect != nil && !conn.opt.cbReconnect(conn.opt.name, retry) {
+			return false
+		}
+
+		select {
+		case <-conn.opt.ctx.Done():
+			return false
+		case <-time.After(conn.opt.delayer.Delay(retry)):
+		}
+
+		if connDial(conn, config) {
+			return true
+		}
+	}
 }

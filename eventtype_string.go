@@ -10,14 +10,15 @@ func _() {
 	var x [1]struct{}
 	_ = x[EventUp-0]
 	_ = x[EventDown-1]
-	_ = x[EventCannotRecoverYet-2]
+	_ = x[EventCannotEstablish-2]
 	_ = x[EventBlocked-3]
-	_ = x[EventClosed-4]
+	_ = x[EventUnBlocked-4]
+	_ = x[EventClosed-5]
 }
 
-const _EventType_name = "UpDownCannotRecoverYetBlockedClosed"
+const _EventType_name = "UpDownCannotEstablishBlockedUnBlockedClosed"
 
-var _EventType_index = [...]uint8{0, 2, 6, 22, 29, 35}
+var _EventType_index = [...]uint8{0, 2, 6, 21, 28, 37, 43}
 
 func (i EventType) String() string {
 	if i < 0 || i >= EventType(len(_EventType_index)-1) {
