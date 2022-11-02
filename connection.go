@@ -7,58 +7,11 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-type SecretProvider interface {
-	Password() (string, error)
-}
-
-type DelayProvider interface {
-	Delay(retry int) time.Duration
-}
-
-type ConnectionOptions struct {
-	notifier    chan Event     // feedback channel
-	name        string         // tag for this connection
-	credentials SecretProvider // value for UpdateSecret()
-	delayer     DelayProvider  // how much to wait between re-attempts
-}
-
 type Connection struct {
 	conn    *amqp.Connection  // core connection
 	address string            // where to connect
 	ready   SafeBool          // is connection usable/available
 	options ConnectionOptions // user parameters
-}
-
-type DefaultDelayer struct {
-	Value time.Duration
-}
-
-func (delayer DefaultDelayer) Delay(retry int) time.Duration {
-	return delayer.Value
-}
-
-func WithConnectionOptionPassword(credentials SecretProvider) func(options *ConnectionOptions) {
-	return func(options *ConnectionOptions) {
-		options.credentials = credentials
-	}
-}
-
-func WithConnectionOptionDelay(delayer DelayProvider) func(options *ConnectionOptions) {
-	return func(options *ConnectionOptions) {
-		options.delayer = delayer
-	}
-}
-
-func WithConnectionOptionName(name string) func(options *ConnectionOptions) {
-	return func(options *ConnectionOptions) {
-		options.name = name
-	}
-}
-
-func WithConnectionOptionNotification(ch chan Event) func(options *ConnectionOptions) {
-	return func(options *ConnectionOptions) {
-		options.notifier = ch
-	}
 }
 
 func (c *Connection) RefreshCredentials() {
@@ -127,7 +80,7 @@ func NewConnection(address string, config amqp.Config, optionFuncs ...func(*Conn
 		for {
 			retry := 0
 			// TODO also monitor the block notifications
-			err, ok := <-conn.conn.NotifyClose(make(chan *amqp.Error))
+			err, chOpen := <-conn.conn.NotifyClose(make(chan *amqp.Error))
 
 			conn.SetReady(false)
 			RaiseEvent(conn.options.notifier, Event{
@@ -137,12 +90,17 @@ func NewConnection(address string, config amqp.Config, optionFuncs ...func(*Conn
 				Err:        err,
 			})
 
-			if !ok {
+			if !chOpen {
 				RaiseEvent(conn.options.notifier, Event{
 					SourceType: CliConnection,
 					SourceName: conn.options.name,
 					Kind:       EventClosed,
 				})
+
+				// graceful close by upper layer, no need to reconnect
+				if err == nil {
+					break
+				}
 			}
 
 			for {

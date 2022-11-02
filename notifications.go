@@ -6,14 +6,16 @@ import (
 
 type ClientType int
 
+//go:generate stringer -type=ClientType -trimprefix=Cli
 const (
-	CliConnection ClientType = iota // connection
-	CliConsumer              = 1    // consumer
-	CliPublisher             = 2    // publisher
+	CliConnection ClientType = iota
+	CliConsumer              = 1
+	CliPublisher             = 2
 )
 
 type EventType int
 
+//go:generate stringer -type=EventType -trimprefix=Event
 const (
 	EventUp EventType = iota
 	EventDown

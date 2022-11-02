@@ -19,7 +19,8 @@ func main() {
 	// await and log any infrastructure notifications
 	go func() {
 		for event := range connStatusChan {
-			fmt.Printf("Got rabbit notification: %v\n", event)
+			fmt.Printf("Got rabbit notification: %s\n",
+				event)
 		}
 	}()
 
