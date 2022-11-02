@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	grabbit "github.com/LucaWolf/grabbit"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -13,30 +14,48 @@ import (
 
 var ConnectionName = "conn.main"
 
+func Down(name string, err error) bool {
+	log.Printf("callback_down {%s} went down with {%s}", name, err)
+	return true // want continuing
+}
+
+func Up(name string) {
+	log.Printf("callback_up: {%s} went up", name)
+}
+
+func Reattempting(name string, retry int) bool {
+	log.Printf("callback_redo: {%s} retry count {%d}", name, retry)
+	return true // want continuing
+}
+
 func main() {
 	connStatusChan := make(chan grabbit.Event, 10)
 
 	// await and log any infrastructure notifications
 	go func() {
 		for event := range connStatusChan {
-			fmt.Printf("Got rabbit notification: %s\n",
-				event)
+			log.Print("notification: ", event)
+			// _ = event
 		}
 	}()
 
-	conn, err := grabbit.NewConnection(
+	conn := grabbit.NewConnection(
 		"amqp://guest:guest@localhost", amqp.Config{},
 		grabbit.WithConnectionOptionName(ConnectionName),
 		grabbit.WithConnectionOptionNotification(connStatusChan),
+		grabbit.WithConnectionOptionDown(Down),
+		grabbit.WithConnectionOptionUp(Up),
+		grabbit.WithConnectionOptionRecovering(Reattempting),
 	)
-	if err != nil {
-		log.Fatal(err)
-	}
+
 	defer func() {
+		fmt.Println("app closing connection")
 		err := conn.Close()
 		if err != nil {
-			log.Fatal(err)
+			log.Print("cannot close: ", err)
 		}
+		// reconnect loop should be dead now
+		<-time.After(15 * time.Second)
 	}()
 
 	// block main thread - wait for shutdown signal
@@ -54,5 +73,4 @@ func main() {
 
 	fmt.Println("awaiting signal")
 	<-done
-	fmt.Println("stopping consumer")
 }
