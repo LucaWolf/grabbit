@@ -40,7 +40,7 @@ func main() {
 	}()
 
 	conn := grabbit.NewConnection(
-		"amqp://guest:guest@localhost", amqp.Config{},
+		"amqp://guest:guest@localhost/koala", amqp.Config{},
 		grabbit.WithConnectionOptionName(ConnectionName),
 		grabbit.WithConnectionOptionNotification(connStatusChan),
 		grabbit.WithConnectionOptionDown(Down),

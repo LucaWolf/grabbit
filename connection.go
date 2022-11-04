@@ -2,49 +2,43 @@ package grabbit
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+// Connection wraps the base amqp connection
 type Connection struct {
-	baseConn *amqp.Connection   // core connection
-	address  string             // where to connect
-	blocked  SafeBool           // TCP stream status
-	opt      ConnectionOptions  // user parameters
-	cancel   context.CancelFunc // bolted on opt.ctx; aborts the reconnect loop
+	baseConn  *amqp.Connection   // core connection
+	address   string             // where to connect
+	blocked   SafeBool           // TCP stream status
+	opt       ConnectionOptions  // user parameters
+	cancelCtx context.CancelFunc // bolted on opt.ctx; aborts the reconnect loop
 }
 
-func (conn *Connection) RefreshCredentials() {
-	if conn.opt.credentials != nil {
-		if secret, err := conn.opt.credentials.Password(); err == nil {
-			if u, err := url.Parse(conn.address); err == nil {
-				u.User = url.UserPassword(u.User.Username(), secret)
-				conn.address = u.String()
-			}
-		}
-	}
+// IsBlocked returns the TCP flow status of the base connection
+func (conn *Connection) IsBlocked() bool {
+	conn.blocked.mu.RLock()
+	defer conn.blocked.mu.RUnlock()
+
+	return conn.blocked.Value
 }
 
-func (c *Connection) IsBlocked() bool {
-	c.blocked.mu.RLock()
-	defer c.blocked.mu.RUnlock()
-
-	return c.blocked.Value
-}
-
+// IsClosed wraps the base connection IsClosed
 func (conn *Connection) IsClosed() bool {
 	return conn.baseConn == nil || conn.baseConn.IsClosed()
 }
 
+// Close wraps the base connection Close
 func (conn *Connection) Close() error {
 	var err error
 
 	if conn.baseConn != nil {
 		err = conn.baseConn.Close()
 	}
-	conn.cancel()
+	conn.cancelCtx()
 
 	return err
 }
@@ -55,6 +49,16 @@ func (conn *Connection) Connection() *amqp.Connection {
 	return conn.baseConn
 }
 
+// Channel wraps the base connection Channel
+func (conn *Connection) Channel() (*amqp.Channel, error) {
+	if conn.baseConn != nil {
+		return conn.baseConn.Channel()
+	}
+
+	return nil, errors.New("connection not available")
+}
+
+// NewConnection creates a managed connection
 func NewConnection(address string, config amqp.Config, optionFuncs ...func(*ConnectionOptions)) *Connection {
 	opt := &ConnectionOptions{
 		notifier: make(chan Event, 5),
@@ -72,7 +76,7 @@ func NewConnection(address string, config amqp.Config, optionFuncs ...func(*Conn
 		opt:     *opt,
 	}
 
-	conn.opt.ctx, conn.cancel = context.WithCancel(opt.ctx)
+	conn.opt.ctx, conn.cancelCtx = context.WithCancel(opt.ctx)
 
 	go func() {
 		if !connReconnectLoop(conn, config) {
@@ -101,6 +105,17 @@ func connMarkBlocked(conn *Connection, value bool) {
 	conn.blocked.Value = value
 }
 
+func (conn *Connection) connRefreshCredentials() {
+	if conn.opt.credentials != nil {
+		if secret, err := conn.opt.credentials.Password(); err == nil {
+			if u, err := url.Parse(conn.address); err == nil {
+				u.User = url.UserPassword(u.User.Username(), secret)
+				conn.address = u.String()
+			}
+		}
+	}
+}
+
 func connDial(conn *Connection, config amqp.Config) bool {
 	event := Event{
 		SourceType: CliConnection,
@@ -109,7 +124,7 @@ func connDial(conn *Connection, config amqp.Config) bool {
 	}
 	connected := true
 
-	conn.RefreshCredentials()
+	conn.connRefreshCredentials()
 
 	conn.baseConn, event.Err = amqp.DialConfig(conn.address, config)
 	if event.Err != nil {
@@ -127,7 +142,7 @@ func connDial(conn *Connection, config amqp.Config) bool {
 	return connected
 }
 
-func connNotifyCloseChan(conn *Connection) chan *amqp.Error {
+func connNotifyClose(conn *Connection) chan *amqp.Error {
 	if conn.baseConn == nil {
 		return nil
 	} else {
@@ -135,7 +150,7 @@ func connNotifyCloseChan(conn *Connection) chan *amqp.Error {
 	}
 }
 
-func connNotifyBlockedChan(conn *Connection) chan amqp.Blocking {
+func connNotifyBlocked(conn *Connection) chan amqp.Blocking {
 	if conn.baseConn == nil {
 		return nil
 	} else {
@@ -148,10 +163,9 @@ func connManager(conn *Connection, config amqp.Config) {
 		select {
 		case <-conn.opt.ctx.Done():
 			return
-		case blk := <-connNotifyBlockedChan(conn):
+		case blk := <-connNotifyBlocked(conn):
 			connMarkBlocked(conn, blk.Active)
-			_ = blk
-		case err, ok := <-connNotifyCloseChan(conn):
+		case err, notifierStatus := <-connNotifyClose(conn):
 			// async
 			RaiseEvent(conn.opt.notifier, Event{
 				SourceType: CliConnection,
@@ -164,7 +178,7 @@ func connManager(conn *Connection, config amqp.Config) {
 				return
 			}
 
-			if !ok {
+			if !notifierStatus {
 				conn.baseConn = nil
 				RaiseEvent(conn.opt.notifier, Event{
 					SourceType: CliConnection,
@@ -174,6 +188,7 @@ func connManager(conn *Connection, config amqp.Config) {
 			}
 
 			// no err means gracefully closed on demand
+			TODO not happy with this bool logic. Review required !!!
 			if !(err == nil || connReconnectLoop(conn, config)) {
 				return
 			}

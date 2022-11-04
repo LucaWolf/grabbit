@@ -9,6 +9,7 @@ type ClientType int
 //go:generate stringer -type=ClientType -trimprefix=Cli
 const (
 	CliConnection ClientType = iota
+	CliChannel
 	CliConsumer
 	CliPublisher
 )
