@@ -100,7 +100,7 @@ func connMarkBlocked(conn *Connection, value bool) {
 	if value {
 		event.Kind = EventBlocked
 	}
-	RaiseEvent(conn.opt.notifier, event)
+	raiseEvent(conn.opt.notifier, event)
 
 	conn.blocked.Value = value
 }
@@ -114,32 +114,6 @@ func (conn *Connection) connRefreshCredentials() {
 			}
 		}
 	}
-}
-
-func connDial(conn *Connection, config amqp.Config) bool {
-	event := Event{
-		SourceType: CliConnection,
-		SourceName: conn.opt.name,
-		Kind:       EventUp,
-	}
-	connected := true
-
-	conn.connRefreshCredentials()
-
-	conn.baseConn, event.Err = amqp.DialConfig(conn.address, config)
-	if event.Err != nil {
-		event.Kind = EventCannotEstablish
-		connected = false
-	}
-
-	// async
-	RaiseEvent(conn.opt.notifier, event)
-	// sync
-	if connected && conn.opt.cbUp != nil {
-		conn.opt.cbUp(conn.opt.name)
-	}
-
-	return connected
 }
 
 func connNotifyClose(conn *Connection) chan *amqp.Error {
@@ -163,54 +137,73 @@ func connManager(conn *Connection, config amqp.Config) {
 		select {
 		case <-conn.opt.ctx.Done():
 			return
-		case blk := <-connNotifyBlocked(conn):
-			connMarkBlocked(conn, blk.Active)
+		case status := <-connNotifyBlocked(conn):
+			connMarkBlocked(conn, status.Active)
 		case err, notifierStatus := <-connNotifyClose(conn):
-			// async
-			RaiseEvent(conn.opt.notifier, Event{
-				SourceType: CliConnection,
-				SourceName: conn.opt.name,
-				Kind:       EventDown,
-				Err:        err,
-			})
-			// sync
-			if conn.opt.cbDown != nil && !conn.opt.cbDown(conn.opt.name, err) {
-				return
-			}
-
-			if !notifierStatus {
-				conn.baseConn = nil
-				RaiseEvent(conn.opt.notifier, Event{
-					SourceType: CliConnection,
-					SourceName: conn.opt.name,
-					Kind:       EventClosed,
-				})
-			}
-
-			// no err means gracefully closed on demand
-			TODO not happy with this bool logic. Review required !!!
-			if !(err == nil || connReconnectLoop(conn, config)) {
+			if !connRecover(conn, config, err, notifierStatus) {
 				return
 			}
 		}
 	}
 }
 
+// connRecover attempts recovery. Returns false if wanting to shut-down this connection
+// or not possible as indicated by engine via err,notifierStatus
+func connRecover(conn *Connection, config amqp.Config, err *amqp.Error, notifierStatus bool) bool {
+	raiseEvent(conn.opt.notifier, Event{
+		SourceType: CliConnection,
+		SourceName: conn.opt.name,
+		Kind:       EventDown,
+		Err:        err,
+	})
+	// abort by callback
+	if !callbackAllowedDown(conn.opt.cbDown, conn.opt.name, err) {
+		return false
+	}
+
+	if !notifierStatus {
+		conn.baseConn = nil
+		raiseEvent(conn.opt.notifier, Event{
+			SourceType: CliConnection,
+			SourceName: conn.opt.name,
+			Kind:       EventClosed,
+		})
+	}
+	// no err means gracefully closed on demand
+	return err != nil && connReconnectLoop(conn, config)
+}
+
+func connDial(conn *Connection, config amqp.Config) bool {
+	event := Event{
+		SourceType: CliConnection,
+		SourceName: conn.opt.name,
+		Kind:       EventUp,
+	}
+	result := true
+
+	conn.connRefreshCredentials()
+
+	conn.baseConn, event.Err = amqp.DialConfig(conn.address, config)
+	if event.Err != nil {
+		event.Kind = EventCannotEstablish
+		result = false
+	}
+
+	raiseEvent(conn.opt.notifier, event)
+	callbackDoUp(result, conn.opt.cbUp, conn.opt.name)
+
+	return result
+}
+
+// connReconnectLoop returns false when connection was denied by callback or context
 func connReconnectLoop(conn *Connection, config amqp.Config) bool {
 	retry := 0
-
 	for {
 		retry = (retry + 1) % 0xFFFF
-
-		// sync
-		if conn.opt.cbReconnect != nil && !conn.opt.cbReconnect(conn.opt.name, retry) {
+		// aborted
+		if !(callbackAllowedRecovery(conn.opt.cbReconnect, conn.opt.name, retry) &&
+			delayerCompleted(conn.opt.ctx, conn.opt.delayer, retry)) {
 			return false
-		}
-
-		select {
-		case <-conn.opt.ctx.Done():
-			return false
-		case <-time.After(conn.opt.delayer.Delay(retry)):
 		}
 
 		if connDial(conn, config) {

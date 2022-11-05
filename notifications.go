@@ -4,6 +4,11 @@ import (
 	"sync"
 )
 
+type SafeBool struct {
+	Value bool
+	mu    sync.RWMutex
+}
+
 type ClientType int
 
 //go:generate stringer -type=ClientType -trimprefix=Cli
@@ -33,16 +38,14 @@ type Event struct {
 	Err        error      // low level error
 }
 
-func RaiseEvent(ch chan Event, event Event) {
+// RaiseEvent pushes an event type from a particular connection or channel
+// over the provided notification channel.
+// See WithChannelOptionNotification and WithConnectionOptionNotification
+func raiseEvent(ch chan Event, event Event) {
 	select {
 	case ch <- event:
 	default:
 		// chan has not enough capacity, dump this alert
 		_ = event
 	}
-}
-
-type SafeBool struct {
-	Value bool
-	mu    sync.RWMutex
 }

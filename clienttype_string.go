@@ -9,13 +9,14 @@ func _() {
 	// Re-run the stringer command to generate them again.
 	var x [1]struct{}
 	_ = x[CliConnection-0]
-	_ = x[CliConsumer-1]
-	_ = x[CliPublisher-2]
+	_ = x[CliChannel-1]
+	_ = x[CliConsumer-2]
+	_ = x[CliPublisher-3]
 }
 
-const _ClientType_name = "ConnectionConsumerPublisher"
+const _ClientType_name = "ConnectionChannelConsumerPublisher"
 
-var _ClientType_index = [...]uint8{0, 10, 18, 27}
+var _ClientType_index = [...]uint8{0, 10, 17, 25, 34}
 
 func (i ClientType) String() string {
 	if i < 0 || i >= ClientType(len(_ClientType_index)-1) {

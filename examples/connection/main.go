@@ -12,7 +12,10 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-var ConnectionName = "conn.main"
+var (
+	ConnectionName = "conn.main"
+	ChannelName    = "chan.main"
+)
 
 func Down(name string, err error) bool {
 	log.Printf("callback_down {%s} went down with {%s}", name, err)
@@ -48,12 +51,20 @@ func main() {
 		grabbit.WithConnectionOptionRecovering(Reattempting),
 	)
 
+	ch := grabbit.NewChannel(conn,
+		grabbit.WithChannelOptionName(ChannelName),
+		grabbit.WithChannelOptionNotification(connStatusChan),
+	)
+
 	defer func() {
-		fmt.Println("app closing connection")
-		err := conn.Close()
-		if err != nil {
-			log.Print("cannot close: ", err)
+		fmt.Println("app closing connection and dependencies")
+		if err := ch.Close(); err != nil {
+			log.Print("cannot close ch: ", err)
 		}
+		if err := conn.Close(); err != nil {
+			log.Print("cannot close conn: ", err)
+		}
+
 		// reconnect loop should be dead now
 		<-time.After(15 * time.Second)
 	}()
