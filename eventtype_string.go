@@ -14,11 +14,14 @@ func _() {
 	_ = x[EventBlocked-3]
 	_ = x[EventUnBlocked-4]
 	_ = x[EventClosed-5]
+	_ = x[EventMessagePublished-6]
+	_ = x[EventMessageReturned-7]
+	_ = x[EventDefineTopology-8]
 }
 
-const _EventType_name = "UpDownCannotEstablishBlockedUnBlockedClosed"
+const _EventType_name = "UpDownCannotEstablishBlockedUnBlockedClosedMessagePublishedMessageReturnedDefineTopology"
 
-var _EventType_index = [...]uint8{0, 2, 6, 21, 28, 37, 43}
+var _EventType_index = [...]uint8{0, 2, 6, 21, 28, 37, 43, 59, 74, 88}
 
 func (i EventType) String() string {
 	if i < 0 || i >= EventType(len(_EventType_index)-1) {

@@ -3,17 +3,21 @@ package grabbit
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // Channel wraps the base amqp channel.
 type Channel struct {
-	baseChan  *amqp.Channel      // core channel
-	conn      *Connection        // managed connection
-	paused    SafeBool           // flow status when of publisher type
-	opt       ChannelOptions     // user parameters
-	cancelCtx context.CancelFunc // bolted on opt.ctx; aborts the reconnect loop
+	baseChan         *amqp.Channel          // core channel
+	conn             *Connection            // managed connection
+	paused           SafeBool               // flow status when of publisher type
+	opt              ChannelOptions         // user parameters
+	queue            amqp.Queue             // currently assigned work queue
+	chanNotifyPub    chan amqp.Confirmation // persistent (till baseChan redone)
+	chanNotifyReturn chan amqp.Return       // persistent (till baseChan redone)
+	cancelCtx        context.CancelFunc     // bolted on opt.ctx; aborts the reconnect loop
 }
 
 // IsPaused returns a publisher's flow status of the base channel
@@ -47,6 +51,11 @@ func (ch *Channel) Channel() *amqp.Channel {
 	return ch.baseChan
 }
 
+// Queue returns the active queue. Useful for finding the server assigned name
+func (ch *Channel) Queue() *amqp.Queue {
+	return &ch.queue
+}
+
 // NewChannel creates a managed channel.
 // There shouldn't be any need to have direct access and is recommended
 // using a Consumer or Publisher instead.
@@ -54,10 +63,12 @@ func (ch *Channel) Channel() *amqp.Channel {
 // from the master connection but all can be overridden by passing options
 func NewChannel(conn *Connection, optionFuncs ...func(*ChannelOptions)) *Channel {
 	opt := &ChannelOptions{
-		notifier: conn.opt.notifier,
-		name:     "default",
-		delayer:  conn.opt.delayer,
-		ctx:      conn.opt.ctx,
+		notifier:        conn.opt.notifier,
+		name:            "default",
+		delayer:         conn.opt.delayer,
+		cbNotifyPublish: DefaultNotifyPublish,
+		cbNotifyReturn:  DefaultNotifyReturn,
+		ctx:             conn.opt.ctx,
 	}
 
 	for _, optionFunc := range optionFuncs {
@@ -72,7 +83,7 @@ func NewChannel(conn *Connection, optionFuncs ...func(*ChannelOptions)) *Channel
 	ch.opt.ctx, ch.cancelCtx = context.WithCancel(opt.ctx)
 
 	go func() {
-		if !chanReconnectLoop(ch) {
+		if !chanReconnectLoop(ch, false) {
 			return
 		}
 		chanManager(ch)
@@ -122,6 +133,22 @@ func chanNotifyFlow(ch *Channel) chan bool {
 	}
 }
 
+func chanNotifyPublish(ch *Channel) chan amqp.Confirmation {
+	if ch.baseChan == nil || !ch.opt.isPublisher {
+		return nil
+	} else {
+		return ch.baseChan.NotifyPublish(make(chan amqp.Confirmation))
+	}
+}
+
+func chanNotifyReturn(ch *Channel) chan amqp.Return {
+	if ch.baseChan == nil || !ch.opt.isPublisher {
+		return nil
+	} else {
+		return ch.baseChan.NotifyReturn(make(chan amqp.Return))
+	}
+}
+
 func chanManager(ch *Channel) {
 	for {
 		select {
@@ -129,6 +156,15 @@ func chanManager(ch *Channel) {
 			return
 		case status := <-chanNotifyFlow(ch):
 			chanMarkPaused(ch, status)
+
+		case confirm, notifierStatus := <-ch.chanNotifyPub:
+			if notifierStatus {
+				ch.opt.cbNotifyPublish(confirm, ch)
+			}
+		case msg, notifierStatus := <-ch.chanNotifyReturn:
+			if notifierStatus {
+				ch.opt.cbNotifyReturn(msg, ch)
+			}
 		case err, notifierStatus := <-chanNotifyClose(ch):
 			if !chanRecover(ch, err, notifierStatus) {
 				return
@@ -168,7 +204,7 @@ func chanRecover(ch *Channel, err error, notifierStatus bool) bool {
 	}
 
 	// no err means gracefully closed on demand
-	return err != nil && chanReconnectLoop(ch)
+	return err != nil && chanReconnectLoop(ch, true)
 }
 
 func chanGetNew(ch *Channel) bool {
@@ -191,8 +227,10 @@ func chanGetNew(ch *Channel) bool {
 	return result
 }
 
-// chanReconnectLoop returns false when channel was denied by callback or context
-func chanReconnectLoop(ch *Channel) bool {
+// chanReconnectLoop is called once for creating the initial connection then repeatedly as part of the
+// chanManager->chanRecover maintenance.
+// Returns false when channel was denied by callback or context.
+func chanReconnectLoop(ch *Channel, recovering bool) bool {
 	retry := 0
 	for {
 		retry = (retry + 1) % 0xFFFF
@@ -203,7 +241,56 @@ func chanReconnectLoop(ch *Channel) bool {
 		}
 
 		if chanGetNew(ch) {
+			// cannot decide (yet) which infra is critical, let the caller decide via the raised events
+			chanMakeTopology(ch, recovering)
+
+			if ch.opt.isPublisher {
+				ch.chanNotifyPub = chanNotifyPublish(ch)
+				ch.chanNotifyReturn = chanNotifyReturn(ch)
+				ch.baseChan.Confirm(ch.opt.implParams.ConfirmationNoWait)
+			}
 			return true
+		}
+	}
+}
+
+func chanMakeTopology(ch *Channel, recovering bool) {
+	for _, t := range ch.opt.topology {
+		var err error
+		var queue amqp.Queue
+
+		if !t.Declare || (recovering && t.Durable) {
+			return // already declared
+		}
+
+		if t.IsExchange {
+			err = ch.baseChan.ExchangeDeclare(t.Name, t.Kind, t.Durable, t.AutoDelete, t.Internal, t.NoWait, t.Args)
+			if err != nil && t.Bind.Enabled {
+				source, destination := t.TopologyGetRouting()
+				err = ch.baseChan.ExchangeBind(destination, t.Bind.Key, source, t.Bind.NoWait, t.Bind.Args)
+			}
+		} else {
+			queue, err = ch.baseChan.QueueDeclare(t.Name, t.Durable, t.AutoDelete, t.Exclusive, t.NoWait, t.Args)
+			// sometimes the assigned name comes back empty. This is an indication of conn errors
+			if len(queue.Name) == 0 {
+				err = fmt.Errorf("cannot declare durable (%v) queue %s", t.Durable, t.Name)
+			}
+			if t.IsDestination { // save a copy for back reference
+				ch.queue = queue
+			}
+			if err != nil && t.Bind.Enabled {
+				err = ch.baseChan.QueueBind(ch.queue.Name, t.Bind.Key, t.Bind.Peer, t.Bind.NoWait, t.Bind.Args)
+			}
+		}
+
+		if err != nil {
+			event := Event{
+				SourceType: CliChannel,
+				SourceName: ch.opt.name,
+				Kind:       EventDefineTopology,
+				Err:        err,
+			}
+			raiseEvent(ch.opt.notifier, event)
 		}
 	}
 }

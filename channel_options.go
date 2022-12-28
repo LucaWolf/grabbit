@@ -1,15 +1,26 @@
 package grabbit
 
-import "context"
+import (
+	"context"
+)
+
+type ImplementationParameters struct {
+	ConfirmationNoWait bool // Confirmation mode parameter
+}
 
 type ChannelOptions struct {
-	notifier    chan Event             // feedback channel
-	name        string                 // tag for this connection
-	delayer     DelayProvider          // how much to wait between re-attempts
-	cbDown      CallbackWhenDown       // callback on conn lost
-	cbUp        CallbackWhenUp         // callback when conn recovered
-	cbReconnect CallbackWhenRecovering // callback when recovering
-	ctx         context.Context        // cancellation context
+	notifier        chan Event               // feedback channel
+	name            string                   // tag for this connection
+	delayer         DelayProvider            // how much to wait between re-attempts
+	cbDown          CallbackWhenDown         // callback on conn lost
+	cbUp            CallbackWhenUp           // callback when conn recovered
+	cbReconnect     CallbackWhenRecovering   // callback when recovering
+	cbNotifyPublish CallbackNotifyPublish    // publish notification handler
+	cbNotifyReturn  CallbackNotifyReturn     // returned message notification handler
+	topology        []*TopologyOptions       // the _whole_ infrastructure involved as array of queues and exchanges
+	implParams      ImplementationParameters // implementation trigger for publishers or consumers
+	isPublisher     bool                     // indicates if this chan is use for publishing
+	ctx             context.Context          // cancellation context
 }
 
 func WithChannelOptionDown(down CallbackWhenDown) func(options *ChannelOptions) {
@@ -48,5 +59,31 @@ func WithChannelOptionName(name string) func(options *ChannelOptions) {
 func WithChannelOptionNotification(ch chan Event) func(options *ChannelOptions) {
 	return func(options *ChannelOptions) {
 		options.notifier = ch
+	}
+}
+
+func WithChannelOptionTopology(topology []*TopologyOptions) func(options *ChannelOptions) {
+	return func(options *ChannelOptions) {
+		options.topology = topology
+	}
+}
+
+func WithChannelOptionNotifyPublish(publishNotifier CallbackNotifyPublish) func(options *ChannelOptions) {
+	return func(options *ChannelOptions) {
+		options.cbNotifyPublish = publishNotifier
+	}
+}
+
+func WithChannelOptionNotifyReturn(returnNotifier CallbackNotifyReturn) func(options *ChannelOptions) {
+	return func(options *ChannelOptions) {
+		options.cbNotifyReturn = returnNotifier
+	}
+}
+
+func WithChannelOptionPublisherParams(params ImplementationParameters) func(options *ChannelOptions) {
+	return func(options *ChannelOptions) {
+		options.isPublisher = true
+		options.implParams = params
+
 	}
 }

@@ -29,6 +29,9 @@ const (
 	EventBlocked
 	EventUnBlocked
 	EventClosed
+	EventMessagePublished
+	EventMessageReturned
+	EventDefineTopology
 )
 
 type Event struct {

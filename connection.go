@@ -195,7 +195,9 @@ func connDial(conn *Connection, config amqp.Config) bool {
 	return result
 }
 
-// connReconnectLoop returns false when connection was denied by callback or context
+// It is called once for creating the initial connection then repeatedly as part of the
+// connManager->connRecover maintenance.
+// Returns false when connection was denied by callback or context.
 func connReconnectLoop(conn *Connection, config amqp.Config) bool {
 	retry := 0
 	for {
