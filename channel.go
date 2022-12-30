@@ -4,21 +4,65 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// Channel wraps the base amqp channel.
-type Channel struct {
-	baseChan         *amqp.Channel          // core channel
-	conn             *Connection            // managed connection
-	paused           SafeBool               // flow status when of publisher type
-	opt              ChannelOptions         // user parameters
-	queue            amqp.Queue             // currently assigned work queue
-	chanNotifyPub    chan amqp.Confirmation // persistent (till baseChan redone)
-	chanNotifyReturn chan amqp.Return       // persistent (till baseChan redone)
-	cancelCtx        context.CancelFunc     // bolted on opt.ctx; aborts the reconnect loop
+type SafeBaseChan struct {
+	Super *amqp.Channel // core channel
+	Mu    sync.RWMutex  // makes this concurrent safe, maintenance wise only!
 }
+
+func (c *SafeBaseChan) IsSet() bool {
+	c.Mu.RLock()
+	defer c.Mu.RUnlock()
+
+	return c.Super != nil
+}
+
+func (c *SafeBaseChan) set(super *amqp.Channel) {
+	c.Mu.Lock()
+	defer c.Mu.Unlock()
+
+	c.Super = super
+}
+
+func (c *SafeBaseChan) reset() {
+	c.set(nil)
+}
+
+// PersistentNotifiers are channels that have the lifespan of the channel. Only
+// need refreshing when recovering.
+type PersistentNotifiers struct {
+	Published chan amqp.Confirmation // publishing confirmation
+	Returned  chan amqp.Return       // returned messages
+	Flow      chan bool              // flow control
+	Closed    chan *amqp.Error       // channel closed
+	Cancel    chan string            // channel cancelled
+}
+
+// Channel wraps the base amqp channel y creating a managed channel.
+type Channel struct {
+	baseChan SafeBaseChan // supporting amqp channel
+	conn     *Connection  // managed connection
+	paused   SafeBool     // flow status when of publisher type
+	// available        SafeBool               // indicates availability. Deprecated.
+	opt       ChannelOptions      // user parameters
+	queue     string              // currently assigned work queue
+	notifiers PersistentNotifiers // static amqp notification channels
+	cancelCtx context.CancelFunc  // bolted on opt.ctx; aborts the reconnect loop
+}
+
+// // Available returns the overall status of the base connection
+//
+// Deprecated: use IsClosed instead for testing availability.
+// func (ch *Channel) Available() bool {
+// 	ch.available.mu.RLock()
+// 	defer ch.available.mu.RUnlock()
+
+// 	return ch.baseChan.IsSet() && ch.available.Value
+// }
 
 // IsPaused returns a publisher's flow status of the base channel
 func (ch *Channel) IsPaused() bool {
@@ -30,15 +74,21 @@ func (ch *Channel) IsPaused() bool {
 
 // IsClosed returns the availability/online status
 func (ch *Channel) IsClosed() bool {
-	return ch.baseChan == nil
+	ch.baseChan.Mu.RLock()
+	defer ch.baseChan.Mu.RUnlock()
+
+	return ch.baseChan.Super == nil || ch.baseChan.Super.IsClosed()
 }
 
 // Close wraps the base channel Close
 func (ch *Channel) Close() error {
+	ch.baseChan.Mu.RLock()
+	defer ch.baseChan.Mu.RUnlock()
+
 	var err error
 
-	if ch.baseChan != nil {
-		err = ch.baseChan.Close()
+	if ch.baseChan.Super != nil {
+		err = ch.baseChan.Super.Close()
 	}
 	ch.cancelCtx()
 
@@ -46,14 +96,15 @@ func (ch *Channel) Close() error {
 }
 
 // Channel returns the low level library channel for direct access if so
-// desired. WARN: the result may be nil and needs testing before using
-func (ch *Channel) Channel() *amqp.Channel {
-	return ch.baseChan
+// desired. WARN: the Super may be nil and needs testing before using. Also make use of its mutex.
+// Note: returning address as the inner Super may be changed by the recovering coroutine.
+func (ch *Channel) Channel() *SafeBaseChan {
+	return &ch.baseChan
 }
 
 // Queue returns the active queue. Useful for finding the server assigned name
-func (ch *Channel) Queue() *amqp.Queue {
-	return &ch.queue
+func (ch *Channel) Queue() string {
+	return ch.queue
 }
 
 // NewChannel creates a managed channel.
@@ -76,8 +127,10 @@ func NewChannel(conn *Connection, optionFuncs ...func(*ChannelOptions)) *Channel
 	}
 
 	ch := &Channel{
-		opt:  *opt,
-		conn: conn,
+		baseChan:  SafeBaseChan{},
+		notifiers: PersistentNotifiers{},
+		opt:       *opt,
+		conn:      conn,
 	}
 
 	ch.opt.ctx, ch.cancelCtx = context.WithCancel(opt.ctx)
@@ -109,43 +162,32 @@ func chanMarkPaused(ch *Channel, value bool) {
 	ch.paused.Value = value
 }
 
-func chanNotifyClose(ch *Channel) chan *amqp.Error {
-	if ch.baseChan == nil {
-		return nil
-	} else {
-		return ch.baseChan.NotifyClose(make(chan *amqp.Error))
-	}
-}
+// chanMarkAvailable sets the inner available attribute.
+//
+// Deprecated: use IsClosed instead for testing availability.
+// func chanMarkAvailable(ch *Channel, value bool) {
+// 	ch.available.mu.Lock()
+// 	defer ch.available.mu.Unlock()
 
-func chanNotifyCancel(ch *Channel) chan string {
-	if ch.baseChan == nil {
-		return nil
-	} else {
-		return ch.baseChan.NotifyCancel(make(chan string))
-	}
-}
+// 	ch.available.Value = value
+// }
 
-func chanNotifyFlow(ch *Channel) chan bool {
-	if ch.baseChan == nil {
-		return nil
-	} else {
-		return ch.baseChan.NotifyFlow(make(chan bool))
-	}
-}
+func chanNotifiersRefresh(ch *Channel) {
+	ch.baseChan.Mu.RLock()
+	defer ch.baseChan.Mu.RUnlock()
 
-func chanNotifyPublish(ch *Channel) chan amqp.Confirmation {
-	if ch.baseChan == nil || !ch.opt.isPublisher {
-		return nil
-	} else {
-		return ch.baseChan.NotifyPublish(make(chan amqp.Confirmation))
-	}
-}
+	if ch.baseChan.Super != nil {
+		ch.notifiers.Closed = ch.baseChan.Super.NotifyClose(make(chan *amqp.Error))
+		ch.notifiers.Cancel = ch.baseChan.Super.NotifyCancel(make(chan string))
 
-func chanNotifyReturn(ch *Channel) chan amqp.Return {
-	if ch.baseChan == nil || !ch.opt.isPublisher {
-		return nil
-	} else {
-		return ch.baseChan.NotifyReturn(make(chan amqp.Return))
+		// these are publishers specific
+		if ch.opt.implParams.IsPublisher {
+			ch.notifiers.Flow = ch.baseChan.Super.NotifyFlow(make(chan bool))
+			ch.notifiers.Published = ch.baseChan.Super.NotifyPublish(make(chan amqp.Confirmation, ch.opt.implParams.ConfirmationCount))
+			ch.notifiers.Returned = ch.baseChan.Super.NotifyReturn(make(chan amqp.Return))
+
+			ch.baseChan.Super.Confirm(ch.opt.implParams.ConfirmationNoWait)
+		}
 	}
 }
 
@@ -153,29 +195,28 @@ func chanManager(ch *Channel) {
 	for {
 		select {
 		case <-ch.opt.ctx.Done():
+			ch.Close() // cancelCtx() called again but idempotent
 			return
-		case status := <-chanNotifyFlow(ch):
+		case status := <-ch.notifiers.Flow:
 			chanMarkPaused(ch, status)
-
-		case confirm, notifierStatus := <-ch.chanNotifyPub:
+		case confirm, notifierStatus := <-ch.notifiers.Published:
 			if notifierStatus {
 				ch.opt.cbNotifyPublish(confirm, ch)
 			}
-		case msg, notifierStatus := <-ch.chanNotifyReturn:
+		case msg, notifierStatus := <-ch.notifiers.Returned:
 			if notifierStatus {
 				ch.opt.cbNotifyReturn(msg, ch)
 			}
-		case err, notifierStatus := <-chanNotifyClose(ch):
+		case err, notifierStatus := <-ch.notifiers.Closed:
+			// chanMarkAvailable(ch, false)
 			if !chanRecover(ch, err, notifierStatus) {
 				return
 			}
-		case reason, notifierStatus := <-chanNotifyCancel(ch):
+		case reason, notifierStatus := <-ch.notifiers.Cancel:
+			// chanMarkAvailable(ch, false)
 			if !chanRecover(ch, errors.New(reason), notifierStatus) {
 				return
 			}
-			// The rest of notifications are publisher or consumer specific.
-			// Since they may involve custom routines for each case and channel type
-			// is better to capture and treat them in their respective implementation
 		}
 	}
 }
@@ -195,7 +236,8 @@ func chanRecover(ch *Channel, err error, notifierStatus bool) bool {
 	}
 
 	if !notifierStatus {
-		ch.baseChan = nil
+		ch.baseChan.reset()
+
 		raiseEvent(ch.opt.notifier, Event{
 			SourceType: CliChannel,
 			SourceName: ch.opt.name,
@@ -215,10 +257,12 @@ func chanGetNew(ch *Channel) bool {
 	}
 	result := true
 
-	ch.baseChan, event.Err = ch.conn.Channel()
-	if event.Err != nil {
+	if super, err := ch.conn.Channel(); err != nil {
 		event.Kind = EventCannotEstablish
+		event.Err = err
 		result = false
+	} else {
+		ch.baseChan.set(super)
 	}
 
 	raiseEvent(ch.opt.notifier, event)
@@ -234,27 +278,41 @@ func chanReconnectLoop(ch *Channel, recovering bool) bool {
 	retry := 0
 	for {
 		retry = (retry + 1) % 0xFFFF
-		// aborted
-		if !(callbackAllowedRecovery(ch.opt.cbReconnect, ch.opt.name, retry) &&
-			delayerCompleted(ch.opt.ctx, ch.opt.delayer, retry)) {
+		// not wanted
+		if !callbackAllowedRecovery(ch.opt.cbReconnect, ch.opt.name, retry) {
 			return false
 		}
 
 		if chanGetNew(ch) {
+			// chanMarkAvailable(ch, true)
 			// cannot decide (yet) which infra is critical, let the caller decide via the raised events
 			chanMakeTopology(ch, recovering)
-
-			if ch.opt.isPublisher {
-				ch.chanNotifyPub = chanNotifyPublish(ch)
-				ch.chanNotifyReturn = chanNotifyReturn(ch)
-				ch.baseChan.Confirm(ch.opt.implParams.ConfirmationNoWait)
-			}
+			chanNotifiersRefresh(ch)
 			return true
+		}
+		// context cancelled
+		if !delayerCompleted(ch.opt.ctx, ch.opt.delayer, retry) {
+			return false
 		}
 	}
 }
 
 func chanMakeTopology(ch *Channel, recovering bool) {
+	// Channels are not concurrent data/usage wise!
+	// prefer using a local isolated channel.
+	chLocal, err := ch.conn.Channel()
+	if err != nil {
+		event := Event{
+			SourceType: CliChannel,
+			SourceName: "topology.auto",
+			Kind:       EventCannotEstablish,
+			Err:        err,
+		}
+		raiseEvent(ch.opt.notifier, event)
+		return
+	}
+	defer chLocal.Close()
+
 	for _, t := range ch.opt.topology {
 		var err error
 		var queue amqp.Queue
@@ -263,34 +321,36 @@ func chanMakeTopology(ch *Channel, recovering bool) {
 			return // already declared
 		}
 
-		if t.IsExchange {
-			err = ch.baseChan.ExchangeDeclare(t.Name, t.Kind, t.Durable, t.AutoDelete, t.Internal, t.NoWait, t.Args)
-			if err != nil && t.Bind.Enabled {
-				source, destination := t.TopologyGetRouting()
-				err = ch.baseChan.ExchangeBind(destination, t.Bind.Key, source, t.Bind.NoWait, t.Bind.Args)
-			}
-		} else {
-			queue, err = ch.baseChan.QueueDeclare(t.Name, t.Durable, t.AutoDelete, t.Exclusive, t.NoWait, t.Args)
-			// sometimes the assigned name comes back empty. This is an indication of conn errors
-			if len(queue.Name) == 0 {
-				err = fmt.Errorf("cannot declare durable (%v) queue %s", t.Durable, t.Name)
-			}
-			if t.IsDestination { // save a copy for back reference
-				ch.queue = queue
-			}
-			if err != nil && t.Bind.Enabled {
-				err = ch.baseChan.QueueBind(ch.queue.Name, t.Bind.Key, t.Bind.Peer, t.Bind.NoWait, t.Bind.Args)
-			}
+		event := Event{
+			SourceType: CliChannel,
+			SourceName: ch.opt.name,
+			Kind:       EventDefineTopology,
 		}
 
-		if err != nil {
-			event := Event{
-				SourceType: CliChannel,
-				SourceName: ch.opt.name,
-				Kind:       EventDefineTopology,
-				Err:        err,
+		if t.IsExchange {
+			event.SourceName = t.Name
+			err = chLocal.ExchangeDeclare(t.Name, t.Kind, t.Durable, t.AutoDelete, t.Internal, t.NoWait, t.Args)
+			if err != nil && t.Bind.Enabled {
+				source, destination := t.TopologyGetRouting()
+				err = chLocal.ExchangeBind(destination, t.Bind.Key, source, t.Bind.NoWait, t.Bind.Args)
 			}
-			raiseEvent(ch.opt.notifier, event)
+		} else {
+			event.SourceName = t.Name
+			queue, err = chLocal.QueueDeclare(t.Name, t.Durable, t.AutoDelete, t.Exclusive, t.NoWait, t.Args)
+			// sometimes the assigned name comes back empty. This is an indication of conn errors
+			if len(queue.Name) == 0 {
+				err = fmt.Errorf("cannot declare durable (%v) queue: %s", t.Durable, t.Name)
+			}
+			if t.IsDestination { // save a copy for back reference
+				ch.queue = queue.Name
+			}
+			if err != nil && t.Bind.Enabled {
+				err = chLocal.QueueBind(ch.queue, t.Bind.Key, t.Bind.Peer, t.Bind.NoWait, t.Bind.Args)
+			}
+			event.SourceName = queue.Name
 		}
+
+		event.Err = err
+		raiseEvent(ch.opt.notifier, event)
 	}
 }

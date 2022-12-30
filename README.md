@@ -27,6 +27,11 @@ What I'd like this library to provide is:
   * Bonus: optionally provide the users with access to the low level amqp.Channel. **Unsafe**
       initially.
 
+## Non goals
+
+  * not interested in concurrency safety of the channels. Publisher and consumers are relatively cheap, use plenty as needed
+    instead of passing them across coroutines.
+
 ## Usage
 The [examples](https://github.com/LucaWolf/grabbit/blob/main/examples) folder contains sample code for consumes and publishers.
 

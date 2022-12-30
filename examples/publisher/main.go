@@ -16,118 +16,129 @@ import (
 
 var (
 	ConnectionName = "conn.main"
-	ChannelName    = "chan.main"
+	ChannelName    = "chan.publisher.example"
+	QueueName      = "workload"
 )
 
+// CallbackWhenDown
 func OnDown(name string, err error) bool {
-	log.Printf("callback_down {%s} went down with {%s}", name, err)
+	log.Printf("callback: {%s} went down with {%s}", name, err)
 	return true // want continuing
 }
 
+// CallbackWhenUp
 func OnUp(name string) {
-	log.Printf("callback_up: {%s} went up", name)
+	log.Printf("callback: {%s} went up", name)
 }
 
+// CallbackWhenRecovering
 func OnReattempting(name string, retry int) bool {
-	log.Printf("callback_redo: {%s} retry count {%d}", name, retry)
+	log.Printf("callback: connection establish {%s} retry count {%d}", name, retry)
 	return true // want continuing
 }
 
 // CallbackNotifyPublish
 func OnNotifyPublish(confirm amqp.Confirmation, ch *grabbit.Channel) {
-	fmt.Printf("confirm status [%v] over queue [%s]\n", confirm.Ack, ch.Queue().Name)
+	log.Printf("callback: publish confirmed status [%v] from queue [%s]\n", confirm.Ack, ch.Queue())
 }
 
 // CallbackNotifyReturn
 func OnNotifyReturn(confirm amqp.Return, ch *grabbit.Channel) {
-	fmt.Printf("returned over queue [%s]\n", ch.Queue().Name)
+	log.Printf("callback: publish returned from queue [%s]\n", ch.Queue())
+}
+
+func publishSomeIDs(publisher *grabbit.Publisher, start, end int) {
+	message := amqp.Publishing{}
+	data := make([]byte, 0, 64)
+	buff := bytes.NewBuffer(data)
+
+	for i := start; i < end; i++ {
+		<-time.After(3 * time.Second)
+		buff.Reset()
+		buff.WriteString(fmt.Sprintf("test number: %04d", i))
+
+		log.Println("going to send:", buff.String())
+
+		message.Body = buff.Bytes()
+		if err := publisher.Publish(message); err != nil {
+			log.Println("publishing failed with: ", err)
+		}
+	}
 }
 
 func main() {
 	connStatusChan := make(chan grabbit.Event, 10)
+	defer close(connStatusChan)
+
+	ctxMaster, ctxCancel := context.WithCancel(context.TODO())
 
 	// await and log any infrastructure notifications
 	go func() {
 		for event := range connStatusChan {
-			log.Print("notification: ", event)
+			log.Println("notification: ", event)
 			// _ = event
 		}
 	}()
 
 	conn := grabbit.NewConnection(
 		"amqp://guest:guest@localhost", amqp.Config{},
+		grabbit.WithConnectionOptionContext(ctxMaster),
 		grabbit.WithConnectionOptionName(ConnectionName),
 		grabbit.WithConnectionOptionNotification(connStatusChan),
 		grabbit.WithConnectionOptionDown(OnDown),
 		grabbit.WithConnectionOptionUp(OnUp),
 		grabbit.WithConnectionOptionRecovering(OnReattempting),
+		// grabbit.WithConnectionOptionDelay(some_delayer), -- falls back to DefaultDelayer(7500ms)
 	)
 
-	params := grabbit.ImplementationParameters{
-		ConfirmationNoWait: false,
-	}
+	params := grabbit.DefaultPublisherOptions()
+	params.WithKey(QueueName).WithContext(ctxMaster).WithConfirmationsCount(20)
 
 	topos := make([]*grabbit.TopologyOptions, 0, 8)
 	topos = append(topos, &grabbit.TopologyOptions{
-		Name:          "publisher_example",
+		Name:          QueueName,
 		IsDestination: true,
 		Durable:       true,
 		Declare:       true,
 	})
 
-	pub := grabbit.NewPublisher(conn, params,
-		grabbit.WithChannelOptionName("chan_publisher_example"),
-		grabbit.WithChannelOptionNotification(connStatusChan),
+	publisher := grabbit.NewPublisher(conn, params,
+		grabbit.WithChannelOptionContext(ctxMaster),
+		grabbit.WithChannelOptionName(ChannelName),
 		grabbit.WithChannelOptionTopology(topos),
 		grabbit.WithChannelOptionNotifyPublish(OnNotifyPublish),
 		grabbit.WithChannelOptionNotifyReturn(OnNotifyReturn),
+		// grabbit.WithChannelOptionContext(ctxMaster), -- inherited from connection
+		// grabbit.WithChannelOptionDelay(some_delayer), -- inherited from connection
+		// grabbit.WithChannelOptionNotification(connStatusChan), -- inherited from connection
 	)
 
-	message := amqp.Publishing{}
-	data := make([]byte, 0, 64)
-	buff := bytes.NewBuffer(data)
-
-	for i := 0; i < 5; i++ {
-		buff.Reset()
-		buff.WriteString(fmt.Sprintf("test number: %04d", i))
-
-		fmt.Println("going to send:", buff.String())
-
-		message.Body = buff.Bytes()
-		if err := pub.PublishWithContext(context.TODO(), "", "publisher_example", true, false, message); err != nil {
-			fmt.Println("publishing failed with:", err)
-		}
+	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
+		log.Println("publisher not ready yet")
+		ctxCancel()
 		<-time.After(7 * time.Second)
+		log.Println("EXIT")
+		return
 	}
 
+	publishSomeIDs(publisher, 0, 5) // smooth operator
+
 	defer func() {
-		fmt.Println("app closing connection and dependencies")
+		log.Println("app closing connection and dependencies")
 
 		if err := conn.Close(); err != nil {
-			log.Print("cannot close conn: ", err)
+			log.Println("cannot close conn: ", err)
 		}
 
-		// try publishing some more
-		for i := 5; i < 10; i++ {
-			buff.Reset()
-			buff.WriteString(fmt.Sprintf("test number: %04d", i))
+		publishSomeIDs(publisher, 5, 10) // expect failures
 
-			fmt.Println("going to send:", buff.String())
-
-			message.Body = buff.Bytes()
-			if err := pub.PublishWithContext(context.TODO(), "", "publisher_example", true, false, message); err != nil {
-				fmt.Println("publishing failed with:", err)
-			}
-			<-time.After(7 * time.Second)
+		if err := publisher.Close(); err != nil {
+			log.Println("cannot close ch: ", err)
 		}
 
-		if err := pub.Close(); err != nil {
-			log.Print("cannot close ch: ", err)
-		}
-
-		// reconnect loop should be dead now
+		// reconnect loop should be dead by now... no further notifications should be observed
 		<-time.After(15 * time.Second)
-		fmt.Println("EXIT")
+		log.Println("EXIT")
 	}()
 
 	// block main thread - wait for shutdown signal
@@ -138,11 +149,10 @@ func main() {
 
 	go func() {
 		sig := <-sigs
-		fmt.Println()
-		fmt.Println(sig)
+		log.Println(sig)
 		close(done)
 	}()
 
-	fmt.Println("awaiting signal")
+	log.Println("awaiting signal")
 	<-done
 }
