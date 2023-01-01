@@ -314,43 +314,53 @@ func chanMakeTopology(ch *Channel, recovering bool) {
 	defer chLocal.Close()
 
 	for _, t := range ch.opt.topology {
-		var err error
-		var queue amqp.Queue
-
 		if !t.Declare || (recovering && t.Durable) {
-			return // already declared
+			continue
 		}
 
 		event := Event{
 			SourceType: CliChannel,
-			SourceName: ch.opt.name,
+			SourceName: t.Name,
 			Kind:       EventDefineTopology,
 		}
 
+		var name string
+
 		if t.IsExchange {
-			event.SourceName = t.Name
-			err = chLocal.ExchangeDeclare(t.Name, t.Kind, t.Durable, t.AutoDelete, t.Internal, t.NoWait, t.Args)
-			if err != nil && t.Bind.Enabled {
-				source, destination := t.TopologyGetRouting()
-				err = chLocal.ExchangeBind(destination, t.Bind.Key, source, t.Bind.NoWait, t.Bind.Args)
-			}
+			event.Err = declareExchange(chLocal, t)
+			name = t.Name
 		} else {
-			event.SourceName = t.Name
-			queue, err = chLocal.QueueDeclare(t.Name, t.Durable, t.AutoDelete, t.Exclusive, t.NoWait, t.Args)
-			// sometimes the assigned name comes back empty. This is an indication of conn errors
-			if len(queue.Name) == 0 {
-				err = fmt.Errorf("cannot declare durable (%v) queue: %s", t.Durable, t.Name)
-			}
-			if t.IsDestination { // save a copy for back reference
-				ch.queue = queue.Name
-			}
-			if err != nil && t.Bind.Enabled {
-				err = chLocal.QueueBind(ch.queue, t.Bind.Key, t.Bind.Peer, t.Bind.NoWait, t.Bind.Args)
-			}
-			event.SourceName = queue.Name
+			name, event.Err = declareQueue(chLocal, t)
+		}
+		// save a copy for back reference
+		if t.IsDestination {
+			ch.queue = name
 		}
 
-		event.Err = err
 		raiseEvent(ch.opt.notifier, event)
 	}
+}
+
+func declareExchange(ch *amqp.Channel, t *TopologyOptions) error {
+	err := ch.ExchangeDeclare(t.Name, t.Kind, t.Durable, t.AutoDelete, t.Internal, t.NoWait, t.Args)
+	if err == nil && t.Bind.Enabled {
+		source, destination := t.GetRouting()
+		err = ch.ExchangeBind(destination, t.Bind.Key, source, t.Bind.NoWait, t.Bind.Args)
+	}
+
+	return err
+}
+
+func declareQueue(ch *amqp.Channel, t *TopologyOptions) (string, error) {
+	queue, err := ch.QueueDeclare(t.Name, t.Durable, t.AutoDelete, t.Exclusive, t.NoWait, t.Args)
+	if err == nil {
+		// sometimes the assigned name comes back empty. This is an indication of conn errors
+		if len(queue.Name) == 0 {
+			err = fmt.Errorf("cannot declare durable (%v) queue %s", t.Durable, t.Name)
+		} else if t.Bind.Enabled {
+			err = ch.QueueBind(queue.Name, t.Bind.Key, t.Bind.Peer, t.Bind.NoWait, t.Bind.Args)
+		}
+	}
+
+	return queue.Name, err
 }

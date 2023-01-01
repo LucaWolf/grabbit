@@ -21,7 +21,7 @@ type TopologyOptions struct {
 	Bind          TopologyBind // complex routing
 	Kind          string       // empty string for default exchange or: direct, topic, fanout, headers.
 	Durable       bool         // maps the durable amqp attribute
-	AutoDelete    bool         // maps the atu-delete amqp attribute
+	AutoDelete    bool         // maps the auto-delete amqp attribute
 	Exclusive     bool         // if queue is exclusive
 	Internal      bool         //
 	NoWait        bool         // // maps the noWait amqp attribute
@@ -30,8 +30,8 @@ type TopologyOptions struct {
 	Declare       bool         // gets created on start and also during recovery if Durable is false
 }
 
-// TopologyGetRouting returns the direction of binding exchanges.
-func (t *TopologyOptions) TopologyGetRouting() (source, destination string) {
+// GetRouting returns the direction of binding two exchanges.
+func (t *TopologyOptions) GetRouting() (source, destination string) {
 	if t.IsDestination {
 		return t.Bind.Peer, t.Name
 	} else {

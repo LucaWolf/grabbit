@@ -69,7 +69,7 @@ func (p *Publisher) Publish(msg amqp.Publishing) error {
 // PublishWithOptions wraps the PublishWithContext using external PublisherOptions
 func (p *Publisher) PublishWithOptions(opt PublisherOptions, msg amqp.Publishing) error {
 
-	if !p.channel.IsClosed() {
+	if p.channel.IsClosed() {
 		return errors.New("publisher channel is not yet available. Try again later")
 	}
 
