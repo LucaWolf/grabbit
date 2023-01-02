@@ -4,11 +4,15 @@ import (
 	"sync"
 )
 
+// SafeBool wraps a boolean in a concurrency safe way so it can
+// be set, reset and tested from different coroutines.
 type SafeBool struct {
-	Value bool
+	value bool
 	mu    sync.RWMutex
 }
 
+// ClientType defines the class of objects that interact with the amqp functionality.
+// Used mostly for sending alerts about specific functionality areas.
 type ClientType int
 
 //go:generate stringer -type=ClientType -trimprefix=Cli
@@ -19,6 +23,7 @@ const (
 	CliPublisher
 )
 
+// EventType defines the class of alerts sent to the application layer.
 type EventType int
 
 //go:generate stringer -type=EventType -trimprefix=Event
@@ -34,6 +39,7 @@ const (
 	EventDefineTopology
 )
 
+// Event defines a simple body structure for the alerts.
 type Event struct {
 	SourceType ClientType // origin type
 	SourceName string     // origin tag
@@ -41,7 +47,7 @@ type Event struct {
 	Err        error      // low level error
 }
 
-// RaiseEvent pushes an event type from a particular connection or channel
+// raiseEvent pushes an event type from a particular connection or channel
 // over the provided notification channel.
 // See WithChannelOptionNotification and WithConnectionOptionNotification
 func raiseEvent(ch chan Event, event Event) {

@@ -4,6 +4,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+// TopologyBind defines the possible binding relation between exchanges or queues and exchanges.
 type TopologyBind struct {
 	Enabled bool       // want this re-routing
 	Peer    string     // other end of routing

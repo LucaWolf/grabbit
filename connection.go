@@ -10,11 +10,18 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+// SafeBaseConn wraps in a concurrency safe way the low level amqp.Connection.
+// The fields are made public in order to allow full amqp operations range over the connection
+// (like for example creating an application layer, non-managed amqp channel).
+//
+// Warnings: to be used externally in ready only mode! Reserve short lived operations via the mutex;
+// this prevents the maintenance routine from refreshing a lost connection!
 type SafeBaseConn struct {
 	Super *amqp.Connection // core connection
 	Mu    sync.RWMutex     // makes this concurrent safe, maintenance wise only!
 }
 
+// IsSet tests if the low level amp connection is set.
 func (c *SafeBaseConn) IsSet() bool {
 	c.Mu.RLock()
 	defer c.Mu.RUnlock()
@@ -33,35 +40,26 @@ func (c *SafeBaseConn) reset() {
 	c.set(nil)
 }
 
-// Connection wraps the base amqp connection by creating a managed connection.
+// Connection wraps a [SafeBaseConn] with additional attributes
+// (impl. details: rabbit URL, [ConnectionOptions] and a cancelling context).
+// Applications should obtain a connection using [NewConnection].
 type Connection struct {
-	baseConn SafeBaseConn // supporting amqp connection
-	address  string       // where to connect
-	blocked  SafeBool     // TCP stream status
-	// available SafeBool           // indicates availability. Deprecated.
+	baseConn  SafeBaseConn       // supporting amqp connection
+	address   string             // where to connect
+	blocked   SafeBool           // TCP stream status
 	opt       ConnectionOptions  // user parameters
 	cancelCtx context.CancelFunc // bolted on opt.ctx; aborts the reconnect loop
 }
 
-// Available returns the overall status of the base connection.
-//
-// Deprecated: use IsClosed instead for testing availability.
-// func (conn *Connection) Available() bool {
-// 	conn.available.mu.RLock()
-// 	defer conn.available.mu.RUnlock()
-
-// 	return conn.baseConn.IsSet() && conn.available.Value
-// }
-
-// IsBlocked returns the TCP flow status of the base connection
+// IsBlocked returns the TCP flow status of the base connection.
 func (conn *Connection) IsBlocked() bool {
 	conn.blocked.mu.RLock()
 	defer conn.blocked.mu.RUnlock()
 
-	return conn.blocked.Value
+	return conn.blocked.value
 }
 
-// IsClosed wraps the base connection IsClosed
+// IsClosed safely wraps the amqp connection IsClosed
 func (conn *Connection) IsClosed() bool {
 	conn.baseConn.Mu.RLock()
 	defer conn.baseConn.Mu.RUnlock()
@@ -69,7 +67,7 @@ func (conn *Connection) IsClosed() bool {
 	return conn.baseConn.Super == nil || conn.baseConn.Super.IsClosed()
 }
 
-// Close wraps the base connection Close
+// Close safely wraps the amqp connection Close and terminates the maintenance loop.
 func (conn *Connection) Close() error {
 	conn.baseConn.Mu.RLock()
 	defer conn.baseConn.Mu.RUnlock()
@@ -84,14 +82,14 @@ func (conn *Connection) Close() error {
 	return err
 }
 
-// Connection returns the low level library connection for direct access if so
-// desired. WARN: the Super may be nil and needs testing before using. Also make use of its mutex.
-// Note: returning address as the inner Super may be changed by the recovering coroutine.
+// Connection returns the safe base connection and thus indirectly the low level library connection.
 func (conn *Connection) Connection() *SafeBaseConn {
 	return &conn.baseConn
 }
 
-// Channel wraps the base connection Channel
+// Channel safely wraps the amqp connection Channel() function.
+// The lock is used internally so there is no need for the application layer
+// to access the lock directly.
 func (conn *Connection) Channel() (*amqp.Channel, error) {
 	conn.baseConn.Mu.RLock()
 	defer conn.baseConn.Mu.RUnlock()
@@ -103,7 +101,9 @@ func (conn *Connection) Channel() (*amqp.Channel, error) {
 	return nil, errors.New("connection not available")
 }
 
-// NewConnection creates a managed connection
+// NewConnection creates a managed connection.
+// Internally it derives a new WithCancel context from the passed (if any) context via
+// [WithConnectionOptionContext]
 func NewConnection(address string, config amqp.Config, optionFuncs ...func(*ConnectionOptions)) *Connection {
 	opt := &ConnectionOptions{
 		notifier: make(chan Event),
@@ -148,18 +148,8 @@ func connMarkBlocked(conn *Connection, value bool) {
 	}
 	raiseEvent(conn.opt.notifier, event)
 
-	conn.blocked.Value = value
+	conn.blocked.value = value
 }
-
-// connMarkAvailable sets the inner available attribute.
-//
-// Deprecated: use IsClosed instead for testing availability.
-// func connMarkAvailable(conn *Connection, value bool) {
-// 	conn.available.mu.Lock()
-// 	defer conn.available.mu.Unlock()
-
-// 	conn.available.Value = value
-// }
 
 func (conn *Connection) connRefreshCredentials() {
 	if conn.opt.credentials != nil {

@@ -44,10 +44,9 @@ type PersistentNotifiers struct {
 
 // Channel wraps the base amqp channel y creating a managed channel.
 type Channel struct {
-	baseChan SafeBaseChan // supporting amqp channel
-	conn     *Connection  // managed connection
-	paused   SafeBool     // flow status when of publisher type
-	// available        SafeBool               // indicates availability. Deprecated.
+	baseChan  SafeBaseChan        // supporting amqp channel
+	conn      *Connection         // managed connection
+	paused    SafeBool            // flow status when of publisher type
 	opt       ChannelOptions      // user parameters
 	queue     string              // currently assigned work queue
 	notifiers PersistentNotifiers // static amqp notification channels
@@ -69,7 +68,7 @@ func (ch *Channel) IsPaused() bool {
 	ch.paused.mu.RLock()
 	defer ch.paused.mu.RUnlock()
 
-	return ch.paused.Value
+	return ch.paused.value
 }
 
 // IsClosed returns the availability/online status
@@ -159,18 +158,8 @@ func chanMarkPaused(ch *Channel, value bool) {
 	}
 	raiseEvent(ch.opt.notifier, event)
 
-	ch.paused.Value = value
+	ch.paused.value = value
 }
-
-// chanMarkAvailable sets the inner available attribute.
-//
-// Deprecated: use IsClosed instead for testing availability.
-// func chanMarkAvailable(ch *Channel, value bool) {
-// 	ch.available.mu.Lock()
-// 	defer ch.available.mu.Unlock()
-
-// 	ch.available.Value = value
-// }
 
 func chanNotifiersRefresh(ch *Channel) {
 	ch.baseChan.Mu.RLock()

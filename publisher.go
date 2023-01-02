@@ -8,12 +8,18 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// Publisher allows you to publish messages safely across an open connection
+// Publisher implements an object allowing calling applications
+// to publish messages on already established connections.
+// Create a publisher instance by calling [NewPublisher].
 type Publisher struct {
 	channel *Channel         // assigned channel
 	opt     PublisherOptions // specific options
 }
 
+// DefaultNotifyPublish provides a base implementation of [CallbackNotifyPublish] which can be
+// overwritten with [WithChannelOptionNotifyPublish]. If confirm.Ack is false
+// it sends an [EventMessagePublished] kind of event over the notification channel
+// (see [WithChannelOptionNotification]) with a literal error containing the delivery tag.
 func DefaultNotifyPublish(confirm amqp.Confirmation, ch *Channel) {
 	if !confirm.Ack {
 		event := Event{
@@ -26,6 +32,10 @@ func DefaultNotifyPublish(confirm amqp.Confirmation, ch *Channel) {
 	}
 }
 
+// DefaultNotifyReturn provides a base implementation of [CallbackNotifyReturn] which can be
+// overwritten with [WithChannelOptionNotifyReturn].
+// It sends an [EventMessageReturned] kind of event over the notification channel
+// (see [WithChannelOptionNotification]) with a literal error containing the return message ID.
 func DefaultNotifyReturn(msg amqp.Return, ch *Channel) {
 	event := Event{
 		SourceType: CliPublisher,
@@ -37,14 +47,14 @@ func DefaultNotifyReturn(msg amqp.Return, ch *Channel) {
 }
 
 // NewPublisher creates a publisher with the desired options.
-// It opens a new dedicated channel using the passed shared connection.
+// It creates and opens a new dedicated [Channel] using the passed shared connection.
 func NewPublisher(conn *Connection, opt PublisherOptions, optionFuncs ...func(*ChannelOptions)) *Publisher {
-	implParams := ChanUsageParameters{
+	useParams := ChanUsageParameters{
 		IsPublisher:        true,
 		ConfirmationNoWait: opt.ConfirmationNoWait,
 		ConfirmationCount:  opt.ConfirmationCount,
 	}
-	chanOpt := append(optionFuncs, WithChannelOptionUsageParams(implParams))
+	chanOpt := append(optionFuncs, WithChannelOptionUsageParams(useParams))
 
 	return &Publisher{
 		channel: NewChannel(conn, chanOpt...),
@@ -52,7 +62,8 @@ func NewPublisher(conn *Connection, opt PublisherOptions, optionFuncs ...func(*C
 	}
 }
 
-// PublishWithOptions wraps the PublishWithContext using internal PublisherOptions
+// Publish wraps the amqp.PublishWithContext using the internal [PublisherOptions]
+// cached when the publisher was created.
 func (p *Publisher) Publish(msg amqp.Publishing) error {
 
 	if p.channel.IsClosed() {
@@ -66,7 +77,7 @@ func (p *Publisher) Publish(msg amqp.Publishing) error {
 		msg)
 }
 
-// PublishWithOptions wraps the PublishWithContext using external PublisherOptions
+// PublishWithOptions wraps the amqp.PublishWithContext using the passed options.
 func (p *Publisher) PublishWithOptions(opt PublisherOptions, msg amqp.Publishing) error {
 
 	if p.channel.IsClosed() {
@@ -80,13 +91,15 @@ func (p *Publisher) PublishWithOptions(opt PublisherOptions, msg amqp.Publishing
 		msg)
 }
 
-// Available returns the status of both the underlying connection and channel
+// Available returns the status of both the underlying connection and channel.
 func (p *Publisher) Available() (bool, bool) {
 	return !p.channel.conn.IsClosed(), !p.channel.IsClosed()
 }
 
-// AwaitAvailable waits till the publisher infrastructure is ready. Useful when the connections and channels
-// are about being created or recovering.
+// AwaitAvailable waits till the publisher infrastructure is ready or timeout expires.
+// Useful when the connections and channels are about being created or recovering.
+// When passing zero value parameter the defaults used are 7500ms for timeout and
+// 330 ms for polling frequency.
 func (p *Publisher) AwaitAvailable(timeout, pollFreq time.Duration) bool {
 	if timeout == 0 {
 		timeout = 7500 * time.Millisecond
@@ -118,7 +131,7 @@ func (p *Publisher) AwaitAvailable(timeout, pollFreq time.Duration) bool {
 	}
 }
 
-// Close shuts down cleanly the publisher channel
+// Close shuts down cleanly the publisher channel.
 func (p *Publisher) Close() error {
 	return p.channel.Close()
 }

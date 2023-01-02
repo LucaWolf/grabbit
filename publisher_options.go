@@ -5,7 +5,7 @@ import "context"
 // PublisherOptions defines publisher specific parameters. Mostly used as defaults for
 // sending messages and inner channel functionality.
 type PublisherOptions struct {
-	ConfirmationCount  int             // size of publishing confirmations over the amqp channel
+	ConfirmationCount  int             // size of the amqp channel for publishing confirmations
 	ConfirmationNoWait bool            // Confirmation mode parameter
 	Context            context.Context // controlling environment
 	Exchange           string          // routing exchange
