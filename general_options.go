@@ -48,6 +48,50 @@ type CallbackNotifyPublish func(confirm amqp.Confirmation, ch *Channel)
 // return notifications.
 type CallbackNotifyReturn func(confirm amqp.Return, ch *Channel)
 
+// DeliveriesRange indicates the first and last DeliveryTag of the received [Delivery]
+type DeliveriesRange struct {
+	First   uint64 // delivery Tag of the first msg in the batch
+	Last    uint64 // delivery Tag of the last msg in the batch
+	MustAck bool   // manual Ack/Nak is required
+}
+
+// DeliveriesProperties captures the common attributes of multiple commonly grouped
+// (i.e. received over same channel in one go) deliveries. It is an incomplete [amqp.Delivery]
+type DeliveriesProperties struct {
+	// Acknowledger amqp.Acknowledger // the channel from which this delivery arrived
+	Headers amqp.Table // Application or header exchange table
+
+	// Properties
+	ContentType     string // MIME content type
+	ContentEncoding string // MIME content encoding
+	DeliveryMode    uint8  // queue implementation use - non-persistent (1) or persistent (2)
+	Priority        uint8  // queue implementation use - 0 to 9
+	Expiration      string // implementation use - message expiration spec
+
+	ConsumerTag string
+	Exchange    string // basic.publish exchange
+	RoutingKey  string // basic.publish routing key
+}
+
+func (prop *DeliveriesProperties) From(d *amqp.Delivery) {
+	// prop.Acknowledger = d.Acknowledger
+	prop.Headers = d.Headers
+	prop.ContentType = d.ContentType
+	prop.ContentEncoding = d.ContentEncoding
+	prop.DeliveryMode = d.DeliveryMode
+	prop.Priority = d.Priority
+	prop.Expiration = d.Expiration
+	prop.ConsumerTag = d.ConsumerTag
+	prop.Exchange = d.Exchange
+	prop.RoutingKey = d.RoutingKey
+}
+
+// DeliverPayload subtypes the actual content of deliveries
+type DeliveryPayload []byte
+
+// CallbackProcessMessages defines a user passed function for processing the received messages
+type CallbackProcessMessages func(props *DeliveriesProperties, tags DeliveriesRange, messages []DeliveryPayload, ch *Channel)
+
 // CallbackWhenRecovering defines a function used prior to recovering a connection.
 // Returns false when want aborting this connection.
 type CallbackWhenRecovering func(name string, retry int) bool

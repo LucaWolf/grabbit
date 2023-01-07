@@ -16,11 +16,11 @@ type Publisher struct {
 	opt     PublisherOptions // specific options
 }
 
-// DefaultNotifyPublish provides a base implementation of [CallbackNotifyPublish] which can be
+// defaultNotifyPublish provides a base implementation of [CallbackNotifyPublish] which can be
 // overwritten with [WithChannelOptionNotifyPublish]. If confirm.Ack is false
 // it sends an [EventMessagePublished] kind of event over the notification channel
 // (see [WithChannelOptionNotification]) with a literal error containing the delivery tag.
-func DefaultNotifyPublish(confirm amqp.Confirmation, ch *Channel) {
+func defaultNotifyPublish(confirm amqp.Confirmation, ch *Channel) {
 	if !confirm.Ack {
 		event := Event{
 			SourceType: CliPublisher,
@@ -32,11 +32,11 @@ func DefaultNotifyPublish(confirm amqp.Confirmation, ch *Channel) {
 	}
 }
 
-// DefaultNotifyReturn provides a base implementation of [CallbackNotifyReturn] which can be
+// defaultNotifyReturn provides a base implementation of [CallbackNotifyReturn] which can be
 // overwritten with [WithChannelOptionNotifyReturn].
 // It sends an [EventMessageReturned] kind of event over the notification channel
 // (see [WithChannelOptionNotification]) with a literal error containing the return message ID.
-func DefaultNotifyReturn(msg amqp.Return, ch *Channel) {
+func defaultNotifyReturn(msg amqp.Return, ch *Channel) {
 	event := Event{
 		SourceType: CliPublisher,
 		SourceName: ch.opt.name,
@@ -46,13 +46,16 @@ func DefaultNotifyReturn(msg amqp.Return, ch *Channel) {
 	raiseEvent(ch.opt.notifier, event)
 }
 
+// Channel returns the managed [Channel] which can be further used to extract [SafeBaseChan]
+func (p *Publisher) Channel() *Channel {
+	return p.channel
+}
+
 // NewPublisher creates a publisher with the desired options.
 // It creates and opens a new dedicated [Channel] using the passed shared connection.
 func NewPublisher(conn *Connection, opt PublisherOptions, optionFuncs ...func(*ChannelOptions)) *Publisher {
 	useParams := ChanUsageParameters{
-		IsPublisher:        true,
-		ConfirmationNoWait: opt.ConfirmationNoWait,
-		ConfirmationCount:  opt.ConfirmationCount,
+		PublisherUsageOptions: opt.PublisherUsageOptions,
 	}
 	chanOpt := append(optionFuncs, WithChannelOptionUsageParams(useParams))
 

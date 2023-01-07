@@ -2,16 +2,22 @@ package grabbit
 
 import "context"
 
+type PublisherUsageOptions struct {
+	ConfirmationCount  int  // size of publishing confirmations over the amqp channel
+	ConfirmationNoWait bool // publisher confirmation mode parameter
+	IsPublisher        bool // indicates if this chan is used for publishing
+
+}
+
 // PublisherOptions defines publisher specific parameters. Mostly used as defaults for
 // sending messages and inner channel functionality.
 type PublisherOptions struct {
-	ConfirmationCount  int             // size of the amqp channel for publishing confirmations
-	ConfirmationNoWait bool            // Confirmation mode parameter
-	Context            context.Context // controlling environment
-	Exchange           string          // routing exchange
-	Key                string          // routing key (usually queue name)
-	Mandatory          bool            // delivery is mandatory
-	Immediate          bool            // delivery is immediate
+	PublisherUsageOptions
+	Context   context.Context // controlling environment
+	Exchange  string          // routing exchange
+	Key       string          // routing key (usually queue name)
+	Mandatory bool            // delivery is mandatory
+	Immediate bool            // delivery is immediate
 }
 
 // DefaultPublisherOptions creates some sane defaults for publishing messages.
@@ -19,13 +25,16 @@ type PublisherOptions struct {
 // fully under application's control.
 func DefaultPublisherOptions() PublisherOptions {
 	return PublisherOptions{
-		ConfirmationCount:  10,
-		ConfirmationNoWait: false,
-		Context:            context.TODO(),
-		Exchange:           "",
-		Key:                "",
-		Mandatory:          false,
-		Immediate:          false,
+		PublisherUsageOptions: PublisherUsageOptions{
+			ConfirmationCount:  10,
+			ConfirmationNoWait: false,
+			IsPublisher:        true,
+		},
+		Context:   context.TODO(),
+		Exchange:  "",
+		Key:       "",
+		Mandatory: false,
+		Immediate: false,
 	}
 }
 

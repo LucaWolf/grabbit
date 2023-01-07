@@ -40,6 +40,7 @@ type PersistentNotifiers struct {
 	Flow      chan bool              // flow control
 	Closed    chan *amqp.Error       // channel closed
 	Cancel    chan string            // channel cancelled
+	Consumer  <-chan amqp.Delivery   // message intake
 }
 
 // Channel wraps the base amqp channel y creating a managed channel.
@@ -87,6 +88,8 @@ func (ch *Channel) Close() error {
 	var err error
 
 	if ch.baseChan.Super != nil {
+		// TODO It's advisable to wait for all Confirmations to arrive before
+		// calling Channel.Close() or Connection.Close().
 		err = ch.baseChan.Super.Close()
 	}
 	ch.cancelCtx()
@@ -106,6 +109,14 @@ func (ch *Channel) Queue() string {
 	return ch.queue
 }
 
+// Cancel wraps safely the low level amqp channel cancellation
+func (ch *Channel) Cancel(consumer string, noWait bool) error {
+	ch.baseChan.Mu.RLock()
+	defer ch.baseChan.Mu.RUnlock()
+
+	return ch.baseChan.Super.Cancel(consumer, noWait)
+}
+
 // NewChannel creates a managed channel.
 // There shouldn't be any need to have direct access and is recommended
 // using a Consumer or Publisher instead.
@@ -113,12 +124,13 @@ func (ch *Channel) Queue() string {
 // from the master connection but all can be overridden by passing options
 func NewChannel(conn *Connection, optionFuncs ...func(*ChannelOptions)) *Channel {
 	opt := &ChannelOptions{
-		notifier:        conn.opt.notifier,
-		name:            "default",
-		delayer:         conn.opt.delayer,
-		cbNotifyPublish: DefaultNotifyPublish,
-		cbNotifyReturn:  DefaultNotifyReturn,
-		ctx:             conn.opt.ctx,
+		notifier:          conn.opt.notifier,
+		name:              "default",
+		delayer:           conn.opt.delayer,
+		cbNotifyPublish:   defaultNotifyPublish,
+		cbNotifyReturn:    defaultNotifyReturn,
+		cbProcessMessages: defaultPayloadProcessor,
+		ctx:               conn.opt.ctx,
 	}
 
 	for _, optionFunc := range optionFuncs {
@@ -175,7 +187,20 @@ func chanNotifiersRefresh(ch *Channel) {
 			ch.notifiers.Published = ch.baseChan.Super.NotifyPublish(make(chan amqp.Confirmation, ch.opt.implParams.ConfirmationCount))
 			ch.notifiers.Returned = ch.baseChan.Super.NotifyReturn(make(chan amqp.Return))
 
-			ch.baseChan.Super.Confirm(ch.opt.implParams.ConfirmationNoWait)
+			if err := ch.baseChan.Super.Confirm(ch.opt.implParams.ConfirmationNoWait); err != nil {
+				event := Event{
+					SourceType: CliChannel,
+					SourceName: ch.opt.name,
+					Kind:       EventConfirm,
+					Err:        err,
+				}
+				raiseEvent(ch.opt.notifier, event)
+			}
+		}
+		// consumer actions
+		if ch.opt.implParams.IsConsumer {
+			consumerSetup(ch)
+			go consumerRun(ch)
 		}
 	}
 }
@@ -197,12 +222,10 @@ func chanManager(ch *Channel) {
 				ch.opt.cbNotifyReturn(msg, ch)
 			}
 		case err, notifierStatus := <-ch.notifiers.Closed:
-			// chanMarkAvailable(ch, false)
 			if !chanRecover(ch, err, notifierStatus) {
 				return
 			}
 		case reason, notifierStatus := <-ch.notifiers.Cancel:
-			// chanMarkAvailable(ch, false)
 			if !chanRecover(ch, errors.New(reason), notifierStatus) {
 				return
 			}
@@ -273,7 +296,6 @@ func chanReconnectLoop(ch *Channel, recovering bool) bool {
 		}
 
 		if chanGetNew(ch) {
-			// chanMarkAvailable(ch, true)
 			// cannot decide (yet) which infra is critical, let the caller decide via the raised events
 			chanMakeTopology(ch, recovering)
 			chanNotifiersRefresh(ch)

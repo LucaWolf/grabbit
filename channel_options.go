@@ -5,23 +5,23 @@ import (
 )
 
 type ChanUsageParameters struct {
-	ConfirmationCount  int  // size of publishing confirmations over the amqp channel
-	ConfirmationNoWait bool // publisher confirmation mode parameter
-	IsPublisher        bool // indicates if this chan is used for publishing
+	PublisherUsageOptions
+	ConsumerUsageOptions
 }
 
 type ChannelOptions struct {
-	notifier        chan Event             // feedback channel
-	name            string                 // tag for this connection
-	delayer         DelayProvider          // how much to wait between re-attempts
-	cbDown          CallbackWhenDown       // callback on conn lost
-	cbUp            CallbackWhenUp         // callback when conn recovered
-	cbReconnect     CallbackWhenRecovering // callback when recovering
-	cbNotifyPublish CallbackNotifyPublish  // publish notification handler
-	cbNotifyReturn  CallbackNotifyReturn   // returned message notification handler
-	topology        []*TopologyOptions     // the _whole_ infrastructure involved as array of queues and exchanges
-	implParams      ChanUsageParameters    // implementation trigger for publishers or consumers
-	ctx             context.Context        // cancellation context
+	notifier          chan Event              // feedback channel
+	name              string                  // tag for this channel
+	delayer           DelayProvider           // how much to wait between re-attempts
+	cbDown            CallbackWhenDown        // callback on conn lost
+	cbUp              CallbackWhenUp          // callback when conn recovered
+	cbReconnect       CallbackWhenRecovering  // callback when recovering
+	cbNotifyPublish   CallbackNotifyPublish   // publish notification handler
+	cbNotifyReturn    CallbackNotifyReturn    // returned message notification handler
+	cbProcessMessages CallbackProcessMessages // user defined message processing routine
+	topology          []*TopologyOptions      // the _whole_ infrastructure involved as array of queues and exchanges
+	implParams        ChanUsageParameters     // implementation trigger for publishers or consumers
+	ctx               context.Context         // cancellation context
 }
 
 func WithChannelOptionDown(down CallbackWhenDown) func(options *ChannelOptions) {
@@ -81,6 +81,12 @@ func WithChannelOptionNotifyPublish(publishNotifier CallbackNotifyPublish) func(
 func WithChannelOptionNotifyReturn(returnNotifier CallbackNotifyReturn) func(options *ChannelOptions) {
 	return func(options *ChannelOptions) {
 		options.cbNotifyReturn = returnNotifier
+	}
+}
+
+func WithChannelOptionProcessor(proc CallbackProcessMessages) func(options *ChannelOptions) {
+	return func(options *ChannelOptions) {
+		options.cbProcessMessages = proc
 	}
 }
 

@@ -185,7 +185,6 @@ func connManager(conn *Connection, config amqp.Config) {
 		case status := <-evtBlocked:
 			connMarkBlocked(conn, status.Active)
 		case err, notifierStatus := <-evtClosed:
-			// connMarkAvailable(conn, false)
 			if !connRecover(conn, config, err, notifierStatus) {
 				return
 			}
@@ -257,7 +256,6 @@ func connReconnectLoop(conn *Connection, config amqp.Config) bool {
 		}
 
 		if connDial(conn, config) {
-			// connMarkAvailable(conn, true)
 			return true
 		}
 		// context cancelled

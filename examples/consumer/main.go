@@ -17,10 +17,6 @@ import (
 var (
 	ConnectionName = "conn.main"
 	ChannelName    = "chan.publisher.routing.example"
-	KeyAlerts      = "alert"
-	KeyInfo        = "info"
-	QueueAlerts    = "pagers"
-	QueueInfo      = "emails"
 	ExchangeName   = "log"
 )
 
@@ -59,7 +55,7 @@ func publishSomeLogs(publisher *grabbit.Publisher,
 	buff := bytes.NewBuffer(data)
 
 	for i := start; i < end; i++ {
-		<-time.After(3 * time.Second)
+		<-time.After(250 * time.Millisecond)
 		buff.Reset()
 		buff.WriteString(fmt.Sprintf("%s number %04d", opt.Key, i))
 
@@ -72,15 +68,58 @@ func publishSomeLogs(publisher *grabbit.Publisher,
 	}
 }
 
+func MsgHandler(props *grabbit.DeliveriesProperties, tags grabbit.DeliveriesRange, messages []grabbit.DeliveryPayload, ch *grabbit.Channel) {
+	log.Printf("APP: consumer [%s] received [%d] messages:\n", props.ConsumerTag, len(messages))
+	for _, msg := range messages {
+		log.Printf("  [%s] -- messages: %s\n", props.ConsumerTag, string(msg))
+	}
+
+	if tags.MustAck {
+		ch.Channel().Super.Ack(tags.Last, true) // cb executes in library space, no need to lock safeguard
+	}
+}
+
+func consumeSome(conn *grabbit.Connection, tag string) {
+	// create an ephemeral un-named queue, bound to the exchange
+	topos := make([]*grabbit.TopologyOptions, 0, 8)
+	topos = append(topos, &grabbit.TopologyOptions{
+		Name:          "", // leave blank for auto-allocation
+		IsDestination: true,
+		Declare:       true,
+		AutoDelete:    true, // when all clients disconnect
+		Bind: grabbit.TopologyBind{
+			Enabled: true,
+			Peer:    ExchangeName,
+		},
+	})
+
+	opt := grabbit.DefaultConsumerOptions()
+
+	opt.WithName(tag).
+		WithPrefetchCount(3).
+		WithQueue("auto_generated_will_take_over"). // IsDestination above
+		WithPrefetchTimeout(20 * time.Second)
+
+	// start a consumer
+	grabbit.NewConsumer(conn, opt,
+		grabbit.WithChannelOptionName("chan:"+tag),
+		grabbit.WithChannelOptionTopology(topos),
+		grabbit.WithChannelOptionProcessor(MsgHandler),
+	)
+
+	// exit here but the consumer library executes till completion
+	// We could implement a waiter here if really wanted: consumer channel will close on timeout
+}
+
 func main() {
-	connStatusChan := make(chan grabbit.Event, 10)
-	defer close(connStatusChan)
+	events := make(chan grabbit.Event, 10)
+	defer close(events)
 
 	ctxMaster, ctxCancel := context.WithCancel(context.TODO())
 
 	// await and log any infrastructure notifications
 	go func() {
-		for event := range connStatusChan {
+		for event := range events {
 			log.Println("notification: ", event)
 			// _ = event
 		}
@@ -90,44 +129,23 @@ func main() {
 		"amqp://guest:guest@localhost", amqp.Config{},
 		grabbit.WithConnectionOptionContext(ctxMaster),
 		grabbit.WithConnectionOptionName(ConnectionName),
-		grabbit.WithConnectionOptionNotification(connStatusChan),
+		grabbit.WithConnectionOptionNotification(events),
 		grabbit.WithConnectionOptionDown(OnDown),
 		grabbit.WithConnectionOptionUp(OnUp),
 		grabbit.WithConnectionOptionRecovering(OnReattempting),
-		// grabbit.WithConnectionOptionDelay(some_delayer), -- falls back to DefaultDelayer(7500ms)
 	)
 
 	opt := grabbit.DefaultPublisherOptions()
 	opt.WithContext(ctxMaster).WithConfirmationsCount(20)
 
 	topos := make([]*grabbit.TopologyOptions, 0, 8)
-	// create an ephemeral logs exchange
+	// create an ephemeral fanout type 'logs' exchange
 	topos = append(topos, &grabbit.TopologyOptions{
 		Name:          ExchangeName,
 		Declare:       true,
 		IsExchange:    true,
 		IsDestination: true,
-		Kind:          "direct",
-	})
-	// create an ephemeral 'pagers' queue, bound to 'logs' exchange and route 'alert'
-	topos = append(topos, &grabbit.TopologyOptions{
-		Name:    QueueAlerts,
-		Declare: true,
-		Bind: grabbit.TopologyBind{
-			Enabled: true,
-			Peer:    ExchangeName,
-			Key:     KeyAlerts,
-		},
-	})
-	// create an ephemeral 'email' queue, bound to 'logs' exchange and route 'info'
-	topos = append(topos, &grabbit.TopologyOptions{
-		Name:    QueueInfo,
-		Declare: true,
-		Bind: grabbit.TopologyBind{
-			Enabled: true,
-			Peer:    ExchangeName,
-			Key:     KeyInfo,
-		},
+		Kind:          "fanout",
 	})
 
 	publisher := grabbit.NewPublisher(conn, opt,
@@ -137,7 +155,7 @@ func main() {
 		grabbit.WithChannelOptionNotifyReturn(OnNotifyReturn),
 		// grabbit.WithChannelOptionContext(ctxMaster), -- inherited from connection
 		// grabbit.WithChannelOptionDelay(some_delayer), -- inherited from connection
-		// grabbit.WithChannelOptionNotification(connStatusChan), -- inherited from connection
+		// grabbit.WithChannelOptionNotification(events), -- inherited from connection
 	)
 
 	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
@@ -148,12 +166,18 @@ func main() {
 		return
 	}
 
-	// these should end up on the QueueAlerts
-	opt.WithExchange(ExchangeName).WithKey(KeyAlerts)
-	publishSomeLogs(publisher, opt, 0, 5)
-	// these should end up on the QueueInfo
-	opt.WithExchange(ExchangeName).WithKey(KeyInfo)
-	publishSomeLogs(publisher, opt, 0, 5)
+	go consumeSome(conn, "CONSUMER--ONE")
+	go consumeSome(conn, "CONSUMER--TWO")
+
+	// routine key is ignored for fanout exchanges
+	opt.WithExchange(ExchangeName).WithKey("alpha")
+	publishSomeLogs(publisher, opt, 1, 10)
+	opt.WithExchange(ExchangeName).WithKey("beta")
+	publishSomeLogs(publisher, opt, 1, 20)
+	opt.WithExchange(ExchangeName).WithKey("gamma")
+	publishSomeLogs(publisher, opt, 1, 30)
+	opt.WithExchange(ExchangeName).WithKey("delta")
+	publishSomeLogs(publisher, opt, 1, 40)
 
 	defer func() {
 		ctxCancel()

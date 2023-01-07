@@ -34,8 +34,12 @@ const (
 	EventBlocked
 	EventUnBlocked
 	EventClosed
+	EventMessageReceived
 	EventMessagePublished
 	EventMessageReturned
+	EventConfirm
+	EventQos
+	EventConsume
 	EventDefineTopology
 )
 

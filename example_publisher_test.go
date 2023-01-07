@@ -14,7 +14,7 @@ func ExampleNewPublisher() {
 		WithConnectionOptionName("conn.example"),
 	)
 
-	// create a 'logs' direct exchange and route 'alerts' into 'pagers' queue
+	// create a 'logs' direct exchange and route 'alert' into 'pagers' queue
 	topos := make([]*TopologyOptions, 0, 8)
 	topos = append(topos, &TopologyOptions{
 		Name:          "logs",
@@ -29,7 +29,7 @@ func ExampleNewPublisher() {
 		Bind: TopologyBind{
 			Enabled: true,
 			Peer:    "logs",
-			Key:     "alerts",
+			Key:     "alert",
 		},
 	})
 
@@ -37,7 +37,7 @@ func ExampleNewPublisher() {
 	opt.WithExchange("").WithKey("pagers") // direct into queue
 
 	publisher := NewPublisher(conn, opt,
-		WithChannelOptionName("pub.chan.alerts"),
+		WithChannelOptionName("pub.chan.alert"),
 		WithChannelOptionTopology(topos),
 	)
 
@@ -45,9 +45,10 @@ func ExampleNewPublisher() {
 		Body: []byte("some alert payload"),
 	}
 	// the cached publisher options allow direct access to "pagers" queue
-	// ... but the events/callback will not indicate the correct source: IsDestination
+	// but the events will not indicate the correct queue (IsDestination is false)
+	// and ch.Queue() will return the exchange name instead (IsDestination is true).
 	publisher.Publish(message)
 	// better: since we have a complex topology we prefer routing with explicit routing options
-	opt.WithExchange("logs").WithKey("alerts")
+	opt.WithExchange("logs").WithKey("alert")
 	publisher.PublishWithOptions(opt, message)
 }
