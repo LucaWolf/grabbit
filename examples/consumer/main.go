@@ -75,7 +75,7 @@ func MsgHandler(props *grabbit.DeliveriesProperties, tags grabbit.DeliveriesRang
 	}
 
 	if tags.MustAck {
-		ch.Channel().Super.Ack(tags.Last, true) // cb executes in library space, no need to lock safeguard
+		ch.Ack(tags.Last, true) // cb executes in library space, no need to lock safeguard
 	}
 }
 

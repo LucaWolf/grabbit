@@ -5,7 +5,7 @@ import "time"
 func consumerSetup(ch *Channel) {
 	ch.notifiers.Consumer = nil
 
-	if err := ch.baseChan.Super.Qos(ch.opt.implParams.PrefetchCount, ch.opt.implParams.PrefetchSize, ch.opt.implParams.QosGlobal); err != nil {
+	if err := ch.baseChan.super.Qos(ch.opt.implParams.PrefetchCount, ch.opt.implParams.PrefetchSize, ch.opt.implParams.QosGlobal); err != nil {
 		event := Event{
 			SourceType: CliChannel,
 			SourceName: ch.opt.name,
@@ -20,7 +20,7 @@ func consumerSetup(ch *Channel) {
 		qName = ch.queue // only when IsDestination
 	}
 
-	consumer, err := ch.baseChan.Super.Consume(qName,
+	consumer, err := ch.baseChan.super.Consume(qName,
 		ch.opt.implParams.ConsumerName,
 		ch.opt.implParams.ConsumerAutoAck,
 		ch.opt.implParams.ConsumerExclusive,

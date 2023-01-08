@@ -3,33 +3,9 @@ package grabbit
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
-
-type SafeBaseChan struct {
-	Super *amqp.Channel // core channel
-	Mu    sync.RWMutex  // makes this concurrent safe, maintenance wise only!
-}
-
-func (c *SafeBaseChan) IsSet() bool {
-	c.Mu.RLock()
-	defer c.Mu.RUnlock()
-
-	return c.Super != nil
-}
-
-func (c *SafeBaseChan) set(super *amqp.Channel) {
-	c.Mu.Lock()
-	defer c.Mu.Unlock()
-
-	c.Super = super
-}
-
-func (c *SafeBaseChan) reset() {
-	c.set(nil)
-}
 
 // PersistentNotifiers are channels that have the lifespan of the channel. Only
 // need refreshing when recovering.
@@ -51,69 +27,6 @@ type Channel struct {
 	queue     string              // currently assigned work queue
 	notifiers PersistentNotifiers // static amqp notification channels
 	cancelCtx context.CancelFunc  // bolted on opt.ctx; aborts the reconnect loop
-}
-
-// // Available returns the overall status of the base connection
-//
-// Deprecated: use IsClosed instead for testing availability.
-// func (ch *Channel) Available() bool {
-// 	ch.available.mu.RLock()
-// 	defer ch.available.mu.RUnlock()
-
-// 	return ch.baseChan.IsSet() && ch.available.Value
-// }
-
-// IsPaused returns a publisher's flow status of the base channel
-func (ch *Channel) IsPaused() bool {
-	ch.paused.mu.RLock()
-	defer ch.paused.mu.RUnlock()
-
-	return ch.paused.value
-}
-
-// IsClosed returns the availability/online status
-func (ch *Channel) IsClosed() bool {
-	ch.baseChan.Mu.RLock()
-	defer ch.baseChan.Mu.RUnlock()
-
-	return ch.baseChan.Super == nil || ch.baseChan.Super.IsClosed()
-}
-
-// Close wraps the base channel Close
-func (ch *Channel) Close() error {
-	ch.baseChan.Mu.RLock()
-	defer ch.baseChan.Mu.RUnlock()
-
-	var err error
-
-	if ch.baseChan.Super != nil {
-		// TODO It's advisable to wait for all Confirmations to arrive before
-		// calling Channel.Close() or Connection.Close().
-		err = ch.baseChan.Super.Close()
-	}
-	ch.cancelCtx()
-
-	return err
-}
-
-// Channel returns the low level library channel for direct access if so
-// desired. WARN: the Super may be nil and needs testing before using. Also make use of its mutex.
-// Note: returning address as the inner Super may be changed by the recovering coroutine.
-func (ch *Channel) Channel() *SafeBaseChan {
-	return &ch.baseChan
-}
-
-// Queue returns the active queue. Useful for finding the server assigned name
-func (ch *Channel) Queue() string {
-	return ch.queue
-}
-
-// Cancel wraps safely the low level amqp channel cancellation
-func (ch *Channel) Cancel(consumer string, noWait bool) error {
-	ch.baseChan.Mu.RLock()
-	defer ch.baseChan.Mu.RUnlock()
-
-	return ch.baseChan.Super.Cancel(consumer, noWait)
 }
 
 // NewChannel creates a managed channel.
@@ -173,20 +86,20 @@ func chanMarkPaused(ch *Channel, value bool) {
 }
 
 func chanNotifiersRefresh(ch *Channel) {
-	ch.baseChan.Mu.RLock()
-	defer ch.baseChan.Mu.RUnlock()
+	ch.baseChan.mu.RLock()
+	defer ch.baseChan.mu.RUnlock()
 
-	if ch.baseChan.Super != nil {
-		ch.notifiers.Closed = ch.baseChan.Super.NotifyClose(make(chan *amqp.Error))
-		ch.notifiers.Cancel = ch.baseChan.Super.NotifyCancel(make(chan string))
+	if ch.baseChan.super != nil {
+		ch.notifiers.Closed = ch.baseChan.super.NotifyClose(make(chan *amqp.Error))
+		ch.notifiers.Cancel = ch.baseChan.super.NotifyCancel(make(chan string))
 
 		// these are publishers specific
 		if ch.opt.implParams.IsPublisher {
-			ch.notifiers.Flow = ch.baseChan.Super.NotifyFlow(make(chan bool))
-			ch.notifiers.Published = ch.baseChan.Super.NotifyPublish(make(chan amqp.Confirmation, ch.opt.implParams.ConfirmationCount))
-			ch.notifiers.Returned = ch.baseChan.Super.NotifyReturn(make(chan amqp.Return))
+			ch.notifiers.Flow = ch.baseChan.super.NotifyFlow(make(chan bool))
+			ch.notifiers.Published = ch.baseChan.super.NotifyPublish(make(chan amqp.Confirmation, ch.opt.implParams.ConfirmationCount))
+			ch.notifiers.Returned = ch.baseChan.super.NotifyReturn(make(chan amqp.Return))
 
-			if err := ch.baseChan.Super.Confirm(ch.opt.implParams.ConfirmationNoWait); err != nil {
+			if err := ch.baseChan.super.Confirm(ch.opt.implParams.ConfirmationNoWait); err != nil {
 				event := Event{
 					SourceType: CliChannel,
 					SourceName: ch.opt.name,
@@ -338,20 +251,23 @@ func chanMakeTopology(ch *Channel, recovering bool) {
 
 		if t.IsExchange {
 			err = declareExchange(chLocal, t)
+			event.Err = SomeErrFromError(err, err != nil)
 			name = t.Name
 		} else {
-			name, err = declareQueue(chLocal, t)
+			queue, err := declareQueue(chLocal, t)
+			event.Err = SomeErrFromError(err, err != nil)
+			name = queue.Name
 		}
 		// save a copy for back reference
 		if t.IsDestination {
 			ch.queue = name
 		}
-		event.Err = SomeErrFromError(err, err != nil)
 
 		raiseEvent(ch.opt.notifier, event)
 	}
 }
 
+// concurrent unsafe but called immediately after recovering
 func declareExchange(ch *amqp.Channel, t *TopologyOptions) error {
 	err := ch.ExchangeDeclare(t.Name, t.Kind, t.Durable, t.AutoDelete, t.Internal, t.NoWait, t.Args)
 	if err == nil && t.Bind.Enabled {
@@ -362,7 +278,8 @@ func declareExchange(ch *amqp.Channel, t *TopologyOptions) error {
 	return err
 }
 
-func declareQueue(ch *amqp.Channel, t *TopologyOptions) (string, error) {
+// concurrent unsafe but called immediately after recovering
+func declareQueue(ch *amqp.Channel, t *TopologyOptions) (amqp.Queue, error) {
 	queue, err := ch.QueueDeclare(t.Name, t.Durable, t.AutoDelete, t.Exclusive, t.NoWait, t.Args)
 	if err == nil {
 		// sometimes the assigned name comes back empty. This is an indication of conn errors
@@ -373,5 +290,5 @@ func declareQueue(ch *amqp.Channel, t *TopologyOptions) (string, error) {
 		}
 	}
 
-	return queue.Name, err
+	return queue, err
 }

@@ -14,7 +14,7 @@ func defaultPayloadProcessor(props *DeliveriesProperties, tags DeliveriesRange, 
 	raiseEvent(ch.opt.notifier, event)
 
 	if tags.MustAck {
-		ch.baseChan.Super.Ack(tags.Last, true)
+		ch.Ack(tags.Last, true)
 	}
 }
 

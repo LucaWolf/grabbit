@@ -78,8 +78,8 @@ func (p *Publisher) Publish(msg amqp.Publishing) error {
 	}
 
 	// TODO this feels somehow unsafe even though we tested for IsClosed.
-	// Super channel may be down and getting refreshed in this very moment !!!
-	return p.channel.baseChan.Super.PublishWithContext(
+	// super channel may be down and getting refreshed in this very moment !!!
+	return p.channel.baseChan.super.PublishWithContext(
 		p.opt.Context, p.opt.Exchange, p.opt.Key, p.opt.Mandatory, p.opt.Immediate,
 		msg)
 }
@@ -92,8 +92,8 @@ func (p *Publisher) PublishWithOptions(opt PublisherOptions, msg amqp.Publishing
 	}
 
 	// TODO this feels somehow unsafe even though we tested for IsClosed.
-	// Super channel may be down and getting refreshed in this very moment !!!
-	return p.channel.baseChan.Super.PublishWithContext(
+	// super channel may be down and getting refreshed in this very moment !!!
+	return p.channel.baseChan.super.PublishWithContext(
 		opt.Context, opt.Exchange, opt.Key, opt.Mandatory, opt.Immediate,
 		msg)
 }

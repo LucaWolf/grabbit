@@ -2,43 +2,11 @@ package grabbit
 
 import (
 	"context"
-	"errors"
 	"net/url"
-	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
-
-// SafeBaseConn wraps in a concurrency safe way the low level amqp.Connection.
-// The fields are made public in order to allow full amqp operations range over the connection
-// (like for example creating an application layer, non-managed amqp channel).
-//
-// Warnings: to be used externally in ready only mode! Reserve short lived operations via the mutex;
-// this prevents the maintenance routine from refreshing a lost connection!
-type SafeBaseConn struct {
-	Super *amqp.Connection // core connection
-	Mu    sync.RWMutex     // makes this concurrent safe, maintenance wise only!
-}
-
-// IsSet tests if the low level amp connection is set.
-func (c *SafeBaseConn) IsSet() bool {
-	c.Mu.RLock()
-	defer c.Mu.RUnlock()
-
-	return c.Super != nil
-}
-
-func (c *SafeBaseConn) set(super *amqp.Connection) {
-	c.Mu.Lock()
-	defer c.Mu.Unlock()
-
-	c.Super = super
-}
-
-func (c *SafeBaseConn) reset() {
-	c.set(nil)
-}
 
 // Connection wraps a [SafeBaseConn] with additional attributes
 // (impl. details: rabbit URL, [ConnectionOptions] and a cancelling context).
@@ -49,56 +17,6 @@ type Connection struct {
 	blocked   SafeBool           // TCP stream status
 	opt       ConnectionOptions  // user parameters
 	cancelCtx context.CancelFunc // bolted on opt.ctx; aborts the reconnect loop
-}
-
-// IsBlocked returns the TCP flow status of the base connection.
-func (conn *Connection) IsBlocked() bool {
-	conn.blocked.mu.RLock()
-	defer conn.blocked.mu.RUnlock()
-
-	return conn.blocked.value
-}
-
-// IsClosed safely wraps the amqp connection IsClosed
-func (conn *Connection) IsClosed() bool {
-	conn.baseConn.Mu.RLock()
-	defer conn.baseConn.Mu.RUnlock()
-
-	return conn.baseConn.Super == nil || conn.baseConn.Super.IsClosed()
-}
-
-// Close safely wraps the amqp connection Close and terminates the maintenance loop.
-func (conn *Connection) Close() error {
-	conn.baseConn.Mu.RLock()
-	defer conn.baseConn.Mu.RUnlock()
-
-	var err error
-
-	if conn.baseConn.Super != nil {
-		err = conn.baseConn.Super.Close()
-	}
-	conn.cancelCtx()
-
-	return err
-}
-
-// Connection returns the safe base connection and thus indirectly the low level library connection.
-func (conn *Connection) Connection() *SafeBaseConn {
-	return &conn.baseConn
-}
-
-// Channel safely wraps the amqp connection Channel() function.
-// The lock is used internally so there is no need for the application layer
-// to access the lock directly.
-func (conn *Connection) Channel() (*amqp.Channel, error) {
-	conn.baseConn.Mu.RLock()
-	defer conn.baseConn.Mu.RUnlock()
-
-	if conn.baseConn.Super != nil {
-		return conn.baseConn.Super.Channel()
-	}
-
-	return nil, errors.New("connection not available")
 }
 
 // NewConnection creates a managed connection.
@@ -163,12 +81,12 @@ func (conn *Connection) connRefreshCredentials() {
 }
 
 func connErrorNotifiers(conn *Connection) (evtClosed chan *amqp.Error, evtBlocked chan amqp.Blocking) {
-	conn.baseConn.Mu.RLock()
-	defer conn.baseConn.Mu.RUnlock()
+	conn.baseConn.mu.RLock()
+	defer conn.baseConn.mu.RUnlock()
 
-	if conn.baseConn.Super != nil {
-		evtClosed = conn.baseConn.Super.NotifyClose(make(chan *amqp.Error))
-		evtBlocked = conn.baseConn.Super.NotifyBlocked(make(chan amqp.Blocking)) // TODO: is this persistent (similar to chan.Flow?)
+	if conn.baseConn.super != nil {
+		evtClosed = conn.baseConn.super.NotifyClose(make(chan *amqp.Error))
+		evtBlocked = conn.baseConn.super.NotifyBlocked(make(chan amqp.Blocking)) // TODO: is this persistent (similar to chan.Flow?)
 	}
 
 	return
