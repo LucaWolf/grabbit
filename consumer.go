@@ -1,7 +1,6 @@
 package grabbit
 
 import (
-	"fmt"
 	"time"
 )
 
@@ -10,7 +9,7 @@ func defaultPayloadProcessor(props *DeliveriesProperties, tags DeliveriesRange, 
 		SourceType: CliConsumer,
 		SourceName: props.ConsumerTag,
 		Kind:       EventMessageReceived,
-		Err:        fmt.Errorf("delivery tag %v needs processing", tags),
+		Err:        SomeErrFromString("default processor discards messages"),
 	}
 	raiseEvent(ch.opt.notifier, event)
 

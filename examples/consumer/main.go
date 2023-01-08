@@ -17,11 +17,11 @@ import (
 var (
 	ConnectionName = "conn.main"
 	ChannelName    = "chan.publisher.routing.example"
-	ExchangeName   = "log"
+	ExchangeName   = "broadcast"
 )
 
 // CallbackWhenDown
-func OnDown(name string, err error) bool {
+func OnDown(name string, err grabbit.OptionalError) bool {
 	log.Printf("callback: {%s} went down with {%s}", name, err)
 	return true // want continuing
 }
@@ -105,6 +105,7 @@ func consumeSome(conn *grabbit.Connection, tag string) {
 		grabbit.WithChannelOptionName("chan:"+tag),
 		grabbit.WithChannelOptionTopology(topos),
 		grabbit.WithChannelOptionProcessor(MsgHandler),
+		grabbit.WithChannelOptionDown(OnDown),
 	)
 
 	// exit here but the consumer library executes till completion
@@ -153,6 +154,7 @@ func main() {
 		grabbit.WithChannelOptionTopology(topos),
 		grabbit.WithChannelOptionNotifyPublish(OnNotifyPublish),
 		grabbit.WithChannelOptionNotifyReturn(OnNotifyReturn),
+		grabbit.WithChannelOptionDown(OnDown),
 		// grabbit.WithChannelOptionContext(ctxMaster), -- inherited from connection
 		// grabbit.WithChannelOptionDelay(some_delayer), -- inherited from connection
 		// grabbit.WithChannelOptionNotification(events), -- inherited from connection
@@ -173,11 +175,11 @@ func main() {
 	opt.WithExchange(ExchangeName).WithKey("alpha")
 	publishSomeLogs(publisher, opt, 1, 10)
 	opt.WithExchange(ExchangeName).WithKey("beta")
-	publishSomeLogs(publisher, opt, 1, 20)
+	publishSomeLogs(publisher, opt, 1, 10)
 	opt.WithExchange(ExchangeName).WithKey("gamma")
-	publishSomeLogs(publisher, opt, 1, 30)
+	publishSomeLogs(publisher, opt, 1, 10)
 	opt.WithExchange(ExchangeName).WithKey("delta")
-	publishSomeLogs(publisher, opt, 1, 40)
+	publishSomeLogs(publisher, opt, 1, 10)
 
 	defer func() {
 		ctxCancel()

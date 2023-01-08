@@ -26,7 +26,9 @@ func defaultNotifyPublish(confirm amqp.Confirmation, ch *Channel) {
 			SourceType: CliPublisher,
 			SourceName: ch.opt.name,
 			Kind:       EventMessagePublished,
-			Err:        fmt.Errorf("delivery tag %d failed and lost", confirm.DeliveryTag),
+			Err: SomeErrFromString(
+				fmt.Sprintf("delivery tag %d unconfirmed", confirm.DeliveryTag),
+			),
 		}
 		raiseEvent(ch.opt.notifier, event)
 	}
@@ -41,7 +43,9 @@ func defaultNotifyReturn(msg amqp.Return, ch *Channel) {
 		SourceType: CliPublisher,
 		SourceName: ch.opt.name,
 		Kind:       EventMessageReturned,
-		Err:        fmt.Errorf("message %s returned and lost", msg.MessageId),
+		Err: SomeErrFromString(
+			fmt.Sprintf("message %s returned", msg.MessageId),
+		),
 	}
 	raiseEvent(ch.opt.notifier, event)
 }

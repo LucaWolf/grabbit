@@ -21,7 +21,7 @@ var (
 )
 
 // CallbackWhenDown
-func OnDown(name string, err error) bool {
+func OnDown(name string, err grabbit.OptionalError) bool {
 	log.Printf("callback: {%s} went down with {%s}", name, err)
 	return true // want continuing
 }

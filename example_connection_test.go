@@ -22,7 +22,7 @@ func ExampleNewConnection() {
 	}()
 
 	// callbacks
-	onDown := func(name string, err error) bool {
+	onDown := func(name string, err OptionalError) bool {
 		log.Printf("callback: {%s} went down with {%s}", name, err)
 		return true // want continuing
 	}

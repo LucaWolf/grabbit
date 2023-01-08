@@ -17,7 +17,7 @@ var (
 	ChannelName    = "chan.main"
 )
 
-func Down(name string, err error) bool {
+func Down(name string, err grabbit.OptionalError) bool {
 	log.Printf("callback_down {%s} went down with {%s}", name, err)
 	return true // want continuing
 }
@@ -43,7 +43,7 @@ func main() {
 	}()
 
 	conn := grabbit.NewConnection(
-		"amqp://guest:guest@localhost/koala", amqp.Config{},
+		"amqp://guest:guest@localhost", amqp.Config{},
 		grabbit.WithConnectionOptionName(ConnectionName),
 		grabbit.WithConnectionOptionNotification(connStatusChan),
 		grabbit.WithConnectionOptionDown(Down),

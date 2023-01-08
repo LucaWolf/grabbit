@@ -2,7 +2,6 @@ package grabbit
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 
@@ -192,7 +191,7 @@ func chanNotifiersRefresh(ch *Channel) {
 					SourceType: CliChannel,
 					SourceName: ch.opt.name,
 					Kind:       EventConfirm,
-					Err:        err,
+					Err:        SomeErrFromError(err, err != nil),
 				}
 				raiseEvent(ch.opt.notifier, event)
 			}
@@ -222,11 +221,11 @@ func chanManager(ch *Channel) {
 				ch.opt.cbNotifyReturn(msg, ch)
 			}
 		case err, notifierStatus := <-ch.notifiers.Closed:
-			if !chanRecover(ch, err, notifierStatus) {
+			if !chanRecover(ch, SomeErrFromError(err, err != nil), notifierStatus) {
 				return
 			}
 		case reason, notifierStatus := <-ch.notifiers.Cancel:
-			if !chanRecover(ch, errors.New(reason), notifierStatus) {
+			if !chanRecover(ch, SomeErrFromString(reason), notifierStatus) {
 				return
 			}
 		}
@@ -235,7 +234,7 @@ func chanManager(ch *Channel) {
 
 // chanRecover attempts recovery. Returns false if wanting to shut-down this channel
 // or not possible as indicated by engine via err,notifierStatus
-func chanRecover(ch *Channel, err error, notifierStatus bool) bool {
+func chanRecover(ch *Channel, err OptionalError, notifierStatus bool) bool {
 	raiseEvent(ch.opt.notifier, Event{
 		SourceType: CliChannel,
 		SourceName: ch.opt.name,
@@ -258,7 +257,7 @@ func chanRecover(ch *Channel, err error, notifierStatus bool) bool {
 	}
 
 	// no err means gracefully closed on demand
-	return err != nil && chanReconnectLoop(ch, true)
+	return err.IsSet() && chanReconnectLoop(ch, true)
 }
 
 func chanGetNew(ch *Channel) bool {
@@ -271,7 +270,7 @@ func chanGetNew(ch *Channel) bool {
 
 	if super, err := ch.conn.Channel(); err != nil {
 		event.Kind = EventCannotEstablish
-		event.Err = err
+		event.Err = SomeErrFromError(err, err != nil)
 		result = false
 	} else {
 		ch.baseChan.set(super)
@@ -317,7 +316,7 @@ func chanMakeTopology(ch *Channel, recovering bool) {
 			SourceType: CliChannel,
 			SourceName: "topology.auto",
 			Kind:       EventCannotEstablish,
-			Err:        err,
+			Err:        SomeErrFromError(err, err != nil),
 		}
 		raiseEvent(ch.opt.notifier, event)
 		return
@@ -338,15 +337,16 @@ func chanMakeTopology(ch *Channel, recovering bool) {
 		var name string
 
 		if t.IsExchange {
-			event.Err = declareExchange(chLocal, t)
+			err = declareExchange(chLocal, t)
 			name = t.Name
 		} else {
-			name, event.Err = declareQueue(chLocal, t)
+			name, err = declareQueue(chLocal, t)
 		}
 		// save a copy for back reference
 		if t.IsDestination {
 			ch.queue = name
 		}
+		event.Err = SomeErrFromError(err, err != nil)
 
 		raiseEvent(ch.opt.notifier, event)
 	}

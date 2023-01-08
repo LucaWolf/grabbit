@@ -185,7 +185,7 @@ func connManager(conn *Connection, config amqp.Config) {
 		case status := <-evtBlocked:
 			connMarkBlocked(conn, status.Active)
 		case err, notifierStatus := <-evtClosed:
-			if !connRecover(conn, config, err, notifierStatus) {
+			if !connRecover(conn, config, SomeErrFromError(err, err != nil), notifierStatus) {
 				return
 			}
 		}
@@ -194,7 +194,7 @@ func connManager(conn *Connection, config amqp.Config) {
 
 // connRecover attempts recovery. Returns false if wanting to shut-down this connection
 // or not possible as indicated by engine via err,notifierStatus
-func connRecover(conn *Connection, config amqp.Config, err *amqp.Error, notifierStatus bool) bool {
+func connRecover(conn *Connection, config amqp.Config, err OptionalError, notifierStatus bool) bool {
 	raiseEvent(conn.opt.notifier, Event{
 		SourceType: CliConnection,
 		SourceName: conn.opt.name,
@@ -216,7 +216,7 @@ func connRecover(conn *Connection, config amqp.Config, err *amqp.Error, notifier
 		})
 	}
 	// no err means gracefully closed on demand
-	return err != nil && connReconnectLoop(conn, config)
+	return err.IsSet() && connReconnectLoop(conn, config)
 }
 
 func connDial(conn *Connection, config amqp.Config) bool {
@@ -230,7 +230,7 @@ func connDial(conn *Connection, config amqp.Config) bool {
 	conn.connRefreshCredentials()
 
 	if super, err := amqp.DialConfig(conn.address, config); err != nil {
-		event.Err = err
+		event.Err = SomeErrFromError(err, err != nil)
 		event.Kind = EventCannotEstablish
 		result = false
 	} else {

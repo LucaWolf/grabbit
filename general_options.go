@@ -35,7 +35,7 @@ func (delayer DefaultDelayer) Delay(retry int) time.Duration {
 
 // CallbackWhenDown defines a function type used when connection was lost
 // Returns false when want aborting this connection.
-type CallbackWhenDown func(name string, err error) bool
+type CallbackWhenDown func(name string, err OptionalError) bool
 
 // CallbackWhenUp defines a function type used after a successful connection recovery.
 type CallbackWhenUp func(name string)
@@ -108,7 +108,7 @@ func callbackAllowedRecovery(cb CallbackWhenRecovering, name string, attempt int
 // (when provided via [WithChannelOptionDown], [WithConnectionOptionDown])
 // for allowing continuing to the recovery process. Returning 'false' will break out the reconnecting loop
 // (impl.details connRecover, chanRecover).
-func callbackAllowedDown(cb CallbackWhenDown, name string, err error) bool {
+func callbackAllowedDown(cb CallbackWhenDown, name string, err OptionalError) bool {
 	return cb == nil || cb(name, err)
 }
 

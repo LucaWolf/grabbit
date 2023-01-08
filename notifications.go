@@ -45,10 +45,10 @@ const (
 
 // Event defines a simple body structure for the alerts.
 type Event struct {
-	SourceType ClientType // origin type
-	SourceName string     // origin tag
-	Kind       EventType  // type of event
-	Err        error      // low level error
+	SourceType ClientType    // origin type
+	SourceName string        // origin tag
+	Kind       EventType     // type of event
+	Err        OptionalError // low level error
 }
 
 // raiseEvent pushes an event type from a particular connection or channel

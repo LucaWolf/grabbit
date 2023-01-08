@@ -10,7 +10,7 @@ func consumerSetup(ch *Channel) {
 			SourceType: CliChannel,
 			SourceName: ch.opt.name,
 			Kind:       EventQos,
-			Err:        err,
+			Err:        SomeErrFromError(err, err != nil),
 		}
 		raiseEvent(ch.opt.notifier, event)
 	}
@@ -33,7 +33,7 @@ func consumerSetup(ch *Channel) {
 			SourceType: CliChannel,
 			SourceName: ch.opt.name,
 			Kind:       EventConsume,
-			Err:        err,
+			Err:        SomeErrFromError(err, err != nil),
 		}
 		raiseEvent(ch.opt.notifier, event)
 	}
