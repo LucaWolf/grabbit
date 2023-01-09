@@ -1,5 +1,7 @@
 # grabbit
-🚧 Yet another Go wrapper for the RabbitMQ client 🚧 
+Golang wrapper for RabbitMQ managed connections - &beta; release
+
+[![Go Reference](https://pkg.go.dev/badge/github.com/LucaWolf/grabbit.svg)](https://pkg.go.dev/github.com/LucaWolf/grabbit)
 
 ## Rationale
 This is an alternative library providing auto-reconnection support. It's been heavily inspired by other projects (listed in credits) and my previous experiments. The reason for a new
