@@ -62,15 +62,16 @@ func consumerRun(ch *Channel) {
 				}
 				return
 			}
-
-			messages = append(messages, msg.Body)
-			tags.Last = msg.DeliveryTag
-
+			// set props
 			if len(messages) == 1 {
 				tags.First = msg.DeliveryTag
 				tags.MustAck = !ch.opt.implParams.ConsumerAutoAck
 				props.From(&msg)
-			} else if len(messages) == ch.opt.implParams.PrefetchCount {
+			}
+			tags.Last = msg.DeliveryTag
+			messages = append(messages, msg.Body)
+			// process
+			if len(messages) == ch.opt.implParams.PrefetchCount {
 				if len(messages) != 0 {
 					ch.opt.cbProcessMessages(&props, tags, messages, ch)
 				}

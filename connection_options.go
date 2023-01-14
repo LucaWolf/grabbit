@@ -46,6 +46,8 @@ func WithConnectionOptionRecovering(recover CallbackWhenRecovering) func(options
 }
 
 // WithConnectionOptionContext stores the application provided context.
+// Cancelling this context will terminate the recovery loop and also close down the
+// connection (and indirectly its channel dependents).
 func WithConnectionOptionContext(ctx context.Context) func(options *ConnectionOptions) {
 	return func(options *ConnectionOptions) {
 		options.ctx = ctx

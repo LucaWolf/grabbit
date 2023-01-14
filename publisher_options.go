@@ -2,6 +2,9 @@ package grabbit
 
 import "context"
 
+// PublisherUsageOptions defines parameters for driving the publishers
+// behavior and indicating to the supporting channel that publishing
+// operations are enabled.
 type PublisherUsageOptions struct {
 	ConfirmationCount  int  // size of publishing confirmations over the amqp channel
 	ConfirmationNoWait bool // publisher confirmation mode parameter

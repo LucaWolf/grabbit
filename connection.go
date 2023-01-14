@@ -20,8 +20,9 @@ type Connection struct {
 }
 
 // NewConnection creates a managed connection.
+
 // Internally it derives a new WithCancel context from the passed (if any) context via
-// [WithConnectionOptionContext]
+// [WithConnectionOptionContext]. Use the 'WithConnectionOption<OptionName>' for optionFuncs.
 func NewConnection(address string, config amqp.Config, optionFuncs ...func(*ConnectionOptions)) *Connection {
 	opt := &ConnectionOptions{
 		notifier: make(chan Event),

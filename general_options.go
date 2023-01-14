@@ -16,7 +16,8 @@ type SecretProvider interface {
 
 // DelayProvider allows passing a bespoke method for providing the
 // delay policy for waiting between reconnection attempts.
-// See [WithConnectionOptionDelay], [WithChannelOptionDelay].
+// See [WithConnectionOptionDelay], [WithChannelOptionDelay]. TIP:
+// one could pass en exponential delayer derived from the 'retry' counter.
 type DelayProvider interface {
 	Delay(retry int) time.Duration
 }
@@ -33,22 +34,27 @@ func (delayer DefaultDelayer) Delay(retry int) time.Duration {
 	return delayer.Value
 }
 
-// CallbackWhenDown defines a function type used when connection was lost
+// CallbackWhenDown defines a function type used when connection was lost.
 // Returns false when want aborting this connection.
+// Pass your implementations via [WithChannelOptionDown] and [WithConnectionOptionDown].
 type CallbackWhenDown func(name string, err OptionalError) bool
 
-// CallbackWhenUp defines a function type used after a successful connection recovery.
+// CallbackWhenUp defines a function type used after a successful connection or channel recovery.
+// Applications can define their own handler and pass it via
+// [WithConnectionOptionUp] and [WithChannelOptionUp].
 type CallbackWhenUp func(name string)
 
-// CallbackNotifyPublish defines a
-// function type for handling the publish notifications.
+// CallbackNotifyPublish defines a function type for handling the publish notifications.
+// Applications can define their own handler and pass it via [WithChannelOptionNotifyPublish].
 type CallbackNotifyPublish func(confirm amqp.Confirmation, ch *Channel)
 
-// CallbackNotifyReturn defines a function type for handling the
-// return notifications.
+// CallbackNotifyReturn defines a function type for handling the return notifications.
+// Applications can define their own handler and pass it via [WithChannelOptionNotifyReturn].
 type CallbackNotifyReturn func(confirm amqp.Return, ch *Channel)
 
-// DeliveriesRange indicates the first and last DeliveryTag of the received [Delivery]
+// DeliveriesRange indicates the first and last DeliveryTag of the received [Delivery].
+// One could make use of this in the and bulk acknowledge (or reject)
+// the deliveries via the provided channel (see [CallbackProcessMessages]).
 type DeliveriesRange struct {
 	First   uint64 // delivery Tag of the first msg in the batch
 	Last    uint64 // delivery Tag of the last msg in the batch
@@ -73,6 +79,8 @@ type DeliveriesProperties struct {
 	RoutingKey  string // basic.publish routing key
 }
 
+// From fills the 'prop' attributes with the values from
+// the original amqp delivery.
 func (prop *DeliveriesProperties) From(d *amqp.Delivery) {
 	// prop.Acknowledger = d.Acknowledger
 	prop.Headers = d.Headers
@@ -86,14 +94,17 @@ func (prop *DeliveriesProperties) From(d *amqp.Delivery) {
 	prop.RoutingKey = d.RoutingKey
 }
 
-// DeliverPayload subtypes the actual content of deliveries
+// DeliveryPayload subtypes the actual content of deliveries
 type DeliveryPayload []byte
 
-// CallbackProcessMessages defines a user passed function for processing the received messages
+// CallbackProcessMessages defines a user passed function for processing the received messages.
+// Applications can define their own handler and pass it via [WithChannelOptionProcessor].
 type CallbackProcessMessages func(props *DeliveriesProperties, tags DeliveriesRange, messages []DeliveryPayload, ch *Channel)
 
 // CallbackWhenRecovering defines a function used prior to recovering a connection.
 // Returns false when want aborting this connection.
+// Applications can define their own handler and pass it via
+// [WithChannelOptionRecovering] and [WithConnectionOptionRecovering].
 type CallbackWhenRecovering func(name string, retry int) bool
 
 // callbackAllowedRecovery performs the user test

@@ -43,7 +43,9 @@ const (
 	EventDefineTopology
 )
 
-// Event defines a simple body structure for the alerts.
+// Event defines a simple body structure for the alerts received
+// via the notification channels passed in [WithChannelOptionNotification]
+// and [WithConnectionOptionNotification].
 type Event struct {
 	SourceType ClientType    // origin type
 	SourceName string        // origin tag

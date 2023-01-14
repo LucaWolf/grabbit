@@ -4,6 +4,9 @@ import (
 	"context"
 )
 
+// ChanUsageParameters embeds [PublisherUsageOptions] and [ConsumerUsageOptions].
+// It is a private member of the ChannelOptions and cen be passed
+// via [WithChannelOptionUsageParams].
 type ChanUsageParameters struct {
 	PublisherUsageOptions
 	ConsumerUsageOptions
@@ -60,6 +63,8 @@ func WithChannelOptionName(name string) func(options *ChannelOptions) {
 	}
 }
 
+// WithChannelOptionNotification provides an application defined
+// [Event] receiver to handle various alerts about the channel status.
 func WithChannelOptionNotification(ch chan Event) func(options *ChannelOptions) {
 	return func(options *ChannelOptions) {
 		options.notifier = ch

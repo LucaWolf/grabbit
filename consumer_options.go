@@ -8,6 +8,8 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+// ConsumerUsageOptions defines parameters for driving the consumers
+// behavior and indicating to the supporting channel to start consuming.
 type ConsumerUsageOptions struct {
 	IsConsumer        bool          // indicates if this chan is used for consuming
 	ConsumerName      string        // chanel wide consumers unique identifier
@@ -27,6 +29,9 @@ type ConsumerOptions struct {
 	ConsumerUsageOptions
 }
 
+// RandConsumerName creates a random string for the consumers.
+// It is used internally by DefaultConsumerOptions by setting the
+// 'ConsumerName' property of [ConsumerOptions]
 func RandConsumerName() string {
 	randBytes := make([]byte, 8)
 	rand.Read(randBytes)

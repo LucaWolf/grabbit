@@ -18,7 +18,7 @@ type PersistentNotifiers struct {
 	Consumer  <-chan amqp.Delivery   // message intake
 }
 
-// Channel wraps the base amqp channel y creating a managed channel.
+// Channel wraps the base amqp channel by creating a managed channel.
 type Channel struct {
 	baseChan  SafeBaseChan        // supporting amqp channel
 	conn      *Connection         // managed connection
@@ -31,9 +31,12 @@ type Channel struct {
 
 // NewChannel creates a managed channel.
 // There shouldn't be any need to have direct access and is recommended
-// using a Consumer or Publisher instead.
+// using a [Consumer] or [Publisher] instead.
+//
 // The resulting channel inherits the events notifier, context and delayer
-// from the master connection but all can be overridden by passing options
+// from the master connection but all can be overridden by passing options/
+//
+// Use the 'WithChannelOption<OptionName>' for optionFuncs.
 func NewChannel(conn *Connection, optionFuncs ...func(*ChannelOptions)) *Channel {
 	opt := &ChannelOptions{
 		notifier:          conn.opt.notifier,

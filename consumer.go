@@ -31,6 +31,7 @@ func (p *Consumer) Channel() *Channel {
 	return p.channel
 }
 
+// Cancel wraps safely the base consumer channel cancellation.
 func (p *Consumer) Cancel() error {
 	// false indicates future intention (i.e. process already retrieved)
 	return p.channel.Cancel(p.opt.ConsumerName, false)
