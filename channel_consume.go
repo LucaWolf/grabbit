@@ -62,6 +62,8 @@ func consumerRun(ch *Channel) {
 				}
 				return
 			}
+			messages = append(messages, msg.Body)
+
 			// set props
 			if len(messages) == 1 {
 				tags.First = msg.DeliveryTag
@@ -69,7 +71,7 @@ func consumerRun(ch *Channel) {
 				props.From(&msg)
 			}
 			tags.Last = msg.DeliveryTag
-			messages = append(messages, msg.Body)
+
 			// process
 			if len(messages) == ch.opt.implParams.PrefetchCount {
 				if len(messages) != 0 {
