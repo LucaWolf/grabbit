@@ -77,9 +77,7 @@ func (p *Publisher) Publish(msg amqp.Publishing) error {
 		return errors.New("publisher channel is not yet available. Try again later")
 	}
 
-	// TODO this feels somehow unsafe even though we tested for IsClosed.
-	// super channel may be down and getting refreshed in this very moment !!!
-	return p.channel.baseChan.super.PublishWithContext(
+	return p.channel.PublishWithContext(
 		p.opt.Context, p.opt.Exchange, p.opt.Key, p.opt.Mandatory, p.opt.Immediate,
 		msg)
 }
@@ -91,9 +89,7 @@ func (p *Publisher) PublishWithOptions(opt PublisherOptions, msg amqp.Publishing
 		return errors.New("publisher channel is not yet available. Try again later")
 	}
 
-	// TODO this feels somehow unsafe even though we tested for IsClosed.
-	// super channel may be down and getting refreshed in this very moment !!!
-	return p.channel.baseChan.super.PublishWithContext(
+	return p.channel.PublishWithContext(
 		opt.Context, opt.Exchange, opt.Key, opt.Mandatory, opt.Immediate,
 		msg)
 }

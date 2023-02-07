@@ -1,6 +1,8 @@
 package grabbit
 
 import (
+	"context"
+
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -69,7 +71,15 @@ func (ch *Channel) QueueInspect(name string) (amqp.Queue, error) {
 	return ch.baseChan.super.QueueInspect(name)
 }
 
-// QueuePurge safely wraps teh base channel QueuePurge.
+// PublishWithContext safely wraps the base channel PublishWithContext.
+func (ch *Channel) PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	return ch.baseChan.super.PublishWithContext(ctx, exchange, key, mandatory, immediate, msg)
+}
+
+// QueuePurge safely wraps the base channel QueuePurge.
 func (ch *Channel) QueuePurge(name string, noWait bool) (int, error) {
 	ch.baseChan.mu.Lock()
 	defer ch.baseChan.mu.Unlock()
