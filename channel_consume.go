@@ -81,12 +81,16 @@ func consumerRun(ch *Channel) {
 			}
 
 		case <-time.After(ch.opt.implParams.PrefetchTimeout): // no more data or session abort
-			ch.Cancel(ch.opt.implParams.ConsumerName, true)
 			if len(messages) != 0 {
 				ch.opt.cbProcessMessages(&props, tags, messages, ch)
 			}
-			ch.Close()
-			return
+			// let the client decide if they want to cancel/close this consumer
+			event := Event{
+				SourceType: CliConsumer,
+				SourceName: ch.opt.name,
+				Kind:       EventDataExhausted,
+			}
+			raiseEvent(ch.opt.notifier, event)
 		}
 	}
 }

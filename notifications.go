@@ -41,6 +41,7 @@ const (
 	EventQos
 	EventConsume
 	EventDefineTopology
+	EventDataExhausted
 )
 
 // Event defines a simple body structure for the alerts received
