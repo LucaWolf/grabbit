@@ -83,6 +83,7 @@ func consumerRun(ch *Channel) {
 		case <-time.After(ch.opt.implParams.PrefetchTimeout): // no more data or session abort
 			if len(messages) != 0 {
 				ch.opt.cbProcessMessages(&props, tags, messages, ch)
+				messages = make([]DeliveryPayload, 0, ch.opt.implParams.PrefetchCount)
 			}
 			// let the client decide if they want to cancel/close this consumer
 			event := Event{
