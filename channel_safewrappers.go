@@ -44,7 +44,10 @@ func (ch *Channel) Cancel(consumer string, noWait bool) error {
 	ch.baseChan.mu.Lock()
 	defer ch.baseChan.mu.Unlock()
 
-	return ch.baseChan.super.Cancel(consumer, noWait)
+	if ch.baseChan.super != nil {
+		return ch.baseChan.super.Cancel(consumer, noWait)
+	}
+	return nil
 }
 
 // Ack safely wraps the base channel Ack.
