@@ -42,6 +42,7 @@ const (
 	EventConsume
 	EventDefineTopology
 	EventDataExhausted
+	EventDataPartial
 )
 
 // Event defines a simple body structure for the alerts received

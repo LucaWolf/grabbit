@@ -22,11 +22,12 @@ func _() {
 	_ = x[EventConsume-11]
 	_ = x[EventDefineTopology-12]
 	_ = x[EventDataExhausted-13]
+	_ = x[EventDataPartial-14]
 }
 
-const _EventType_name = "UpDownCannotEstablishBlockedUnBlockedClosedMessageReceivedMessagePublishedMessageReturnedConfirmQosConsumeDefineTopologyDataExhausted"
+const _EventType_name = "UpDownCannotEstablishBlockedUnBlockedClosedMessageReceivedMessagePublishedMessageReturnedConfirmQosConsumeDefineTopologyDataExhaustedDataPartial"
 
-var _EventType_index = [...]uint8{0, 2, 6, 21, 28, 37, 43, 58, 74, 89, 96, 99, 106, 120, 133}
+var _EventType_index = [...]uint8{0, 2, 6, 21, 28, 37, 43, 58, 74, 89, 96, 99, 106, 120, 133, 144}
 
 func (i EventType) String() string {
 	if i < 0 || i >= EventType(len(_EventType_index)-1) {
