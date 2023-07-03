@@ -1,5 +1,6 @@
 # grabbit
-Golang wrapper for RabbitMQ managed connections - &beta; release
+Golang wrapper for RabbitMQ managed connections 
+*) API breaking from the &beta; release (see CallbackProcessMessages)
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/LucaWolf/grabbit.svg)](https://pkg.go.dev/github.com/LucaWolf/grabbit)
 

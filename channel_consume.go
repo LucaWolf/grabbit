@@ -42,42 +42,40 @@ func consumerSetup(ch *Channel) {
 
 // consumerRun is the main receiving loop with distributing data processing to the user provided routine
 func consumerRun(ch *Channel) {
-	props := DeliveriesProperties{}
-	tags := DeliveriesRange{}
-	messages := make([]DeliveryPayload, 0, ch.opt.implParams.PrefetchCount)
+	var props DeliveriesProperties
+	mustAck := !ch.opt.implParams.ConsumerAutoAck
+	messages := make([]DeliveryData, 0, ch.opt.implParams.PrefetchCount)
 
 	for {
 		select {
 		case <-ch.opt.ctx.Done(): // main chan and notifiers.Consumers should also be gone
 			ch.Cancel(ch.opt.implParams.ConsumerName, true)
 			if len(messages) != 0 {
-				ch.opt.cbProcessMessages(&props, tags, messages, ch)
+				ch.opt.cbProcessMessages(&props, messages, mustAck, ch)
 			}
 			return
 		case msg, ok := <-ch.notifiers.Consumer: // notifiers data
 			if !ok {
 				ch.Cancel(ch.opt.implParams.ConsumerName, true)
 				if len(messages) != 0 {
-					ch.opt.cbProcessMessages(&props, tags, messages, ch)
+					ch.opt.cbProcessMessages(&props, messages, mustAck, ch)
 				}
 				return
 			}
-			messages = append(messages, msg.Body)
 
 			// set props
 			if len(messages) == 1 {
-				tags.First = msg.DeliveryTag
-				tags.MustAck = !ch.opt.implParams.ConsumerAutoAck
-				props.From(&msg)
+				props = DeliveryPropsFrom(&msg)
 			}
-			tags.Last = msg.DeliveryTag
+			// set data payload
+			messages = append(messages, DeliveryDataFrom(&msg))
 
 			// process
 			if len(messages) == ch.opt.implParams.PrefetchCount {
 				if len(messages) != 0 {
-					ch.opt.cbProcessMessages(&props, tags, messages, ch)
+					ch.opt.cbProcessMessages(&props, messages, mustAck, ch)
 				}
-				messages = make([]DeliveryPayload, 0, ch.opt.implParams.PrefetchCount)
+				messages = make([]DeliveryData, 0, ch.opt.implParams.PrefetchCount)
 			}
 
 		case <-time.After(ch.opt.implParams.PrefetchTimeout):
@@ -88,8 +86,8 @@ func consumerRun(ch *Channel) {
 			}
 			if len(messages) != 0 {
 				event.Kind = EventDataPartial
-				ch.opt.cbProcessMessages(&props, tags, messages, ch)
-				messages = make([]DeliveryPayload, 0, ch.opt.implParams.PrefetchCount)
+				ch.opt.cbProcessMessages(&props, messages, mustAck, ch)
+				messages = make([]DeliveryData, 0, ch.opt.implParams.PrefetchCount)
 			}
 			raiseEvent(ch.opt.notifier, event)
 		}

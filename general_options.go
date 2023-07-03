@@ -52,54 +52,70 @@ type CallbackNotifyPublish func(confirm amqp.Confirmation, ch *Channel)
 // Applications can define their own handler and pass it via [WithChannelOptionNotifyReturn].
 type CallbackNotifyReturn func(confirm amqp.Return, ch *Channel)
 
-// DeliveriesRange indicates the first and last DeliveryTag of the received [Delivery].
-// One could make use of this in the and bulk acknowledge (or reject)
-// the deliveries via the provided channel (see [CallbackProcessMessages]).
-type DeliveriesRange struct {
-	First   uint64 // delivery Tag of the first msg in the batch
-	Last    uint64 // delivery Tag of the last msg in the batch
-	MustAck bool   // manual Ack/Nak is required
-}
-
 // DeliveriesProperties captures the common attributes of multiple commonly grouped
 // (i.e. received over same channel in one go) deliveries. It is an incomplete [amqp.Delivery]
 type DeliveriesProperties struct {
-	// Acknowledger amqp.Acknowledger // the channel from which this delivery arrived
 	Headers amqp.Table // Application or header exchange table
-
-	// Properties
+	// Properties; assume all are common
 	ContentType     string // MIME content type
 	ContentEncoding string // MIME content encoding
 	DeliveryMode    uint8  // queue implementation use - non-persistent (1) or persistent (2)
 	Priority        uint8  // queue implementation use - 0 to 9
-	Expiration      string // implementation use - message expiration spec
-
-	ConsumerTag string
-	Exchange    string // basic.publish exchange
-	RoutingKey  string // basic.publish routing key
+	ConsumerTag     string // client tag as provided during consumer registration
+	Exchange        string // basic.publish exchange
+	RoutingKey      string // basic.publish routing key
 }
 
 // From fills the 'prop' attributes with the values from
 // the original amqp delivery.
-func (prop *DeliveriesProperties) From(d *amqp.Delivery) {
-	// prop.Acknowledger = d.Acknowledger
-	prop.Headers = d.Headers
-	prop.ContentType = d.ContentType
-	prop.ContentEncoding = d.ContentEncoding
-	prop.DeliveryMode = d.DeliveryMode
-	prop.Priority = d.Priority
-	prop.Expiration = d.Expiration
-	prop.ConsumerTag = d.ConsumerTag
-	prop.Exchange = d.Exchange
-	prop.RoutingKey = d.RoutingKey
+func DeliveryPropsFrom(d *amqp.Delivery) (prop DeliveriesProperties) {
+	return DeliveriesProperties{
+		Headers:         d.Headers,
+		ContentType:     d.ContentType,
+		ContentEncoding: d.ContentEncoding,
+		DeliveryMode:    d.DeliveryMode,
+		Priority:        d.Priority,
+		ConsumerTag:     d.ConsumerTag,
+		Exchange:        d.Exchange,
+		RoutingKey:      d.RoutingKey,
+	}
 }
 
 // DeliveryPayload subtypes the actual content of deliveries
 type DeliveryPayload []byte
 
+// DeliveryData isolates the data part of each specific delivered message
+type DeliveryData struct {
+	Body        DeliveryPayload // actual data payload
+	DeliveryTag uint64          // sequential number of this message
+	Redelivered bool            // message has been re-enqueued
+	Expiration  string          // message expiration spec
+	MessageId   string          // message identifier
+	Timestamp   time.Time       // message timestamp
+	Type        string          // message type name
+	UserId      string          // user of the publishing connection
+	AppId       string          // application id
+}
+
+// DeliveryDataFrom creates data payload with the values from
+// the original amqp delivery.
+func DeliveryDataFrom(d *amqp.Delivery) (data DeliveryData) {
+	return DeliveryData{
+		Body:        d.Body,
+		DeliveryTag: d.DeliveryTag,
+		Redelivered: d.Redelivered,
+		Expiration:  d.Expiration,
+		MessageId:   d.MessageId,
+		Timestamp:   d.Timestamp,
+		Type:        d.Type,
+		UserId:      d.UserId,
+		AppId:       d.AppId,
+	}
+}
+
 // CallbackProcessMessages defines a user passed function for processing the received messages.
 // Applications can define their own handler and pass it via [WithChannelOptionProcessor].
-type CallbackProcessMessages func(props *DeliveriesProperties, tags DeliveriesRange, messages []DeliveryPayload, ch *Channel)
+type CallbackProcessMessages func(props *DeliveriesProperties, messages []DeliveryData, mustAck bool, ch *Channel)
 
 // CallbackWhenRecovering defines a function used prior to recovering a connection.
 // Returns false when want aborting this connection.

@@ -10,7 +10,7 @@ type TopologyBind struct {
 	Peer    string     // other end of routing
 	Key     string     // routing key / filter
 	NoWait  bool       // re-routing confirmation required
-	Args    amqp.Table // core proprieties
+	Args    amqp.Table // core properties
 }
 
 // TopologyOptions defines the infrastructure topology, i.e. exchange and queues definition

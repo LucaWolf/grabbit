@@ -68,14 +68,14 @@ func publishSomeLogs(publisher *grabbit.Publisher,
 	}
 }
 
-func MsgHandler(props *grabbit.DeliveriesProperties, tags grabbit.DeliveriesRange, messages []grabbit.DeliveryPayload, ch *grabbit.Channel) {
+func MsgHandler(props *grabbit.DeliveriesProperties, messages []grabbit.DeliveryData, mustAck bool, ch *grabbit.Channel) {
 	log.Printf("APP: consumer [%s] received [%d] messages:\n", props.ConsumerTag, len(messages))
 	for _, msg := range messages {
-		log.Printf("  [%s] -- messages: %s\n", props.ConsumerTag, string(msg))
+		log.Printf("  [%s] -- messages: %s\n", props.ConsumerTag, string(msg.Body))
 	}
 
-	if tags.MustAck {
-		ch.Ack(tags.Last, true) // cb executes in library space, no need to lock safeguard
+	if mustAck && len(messages) != 0 {
+		ch.Ack(messages[len(messages)-1].DeliveryTag, true) // cb executes in library space, no need to lock safeguard
 	}
 }
 

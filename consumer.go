@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-func defaultPayloadProcessor(props *DeliveriesProperties, tags DeliveriesRange, messages []DeliveryPayload, ch *Channel) {
+func defaultPayloadProcessor(props *DeliveriesProperties, messages []DeliveryData, mustAck bool, ch *Channel) {
 	event := Event{
 		SourceType: CliConsumer,
 		SourceName: props.ConsumerTag,
@@ -13,8 +13,8 @@ func defaultPayloadProcessor(props *DeliveriesProperties, tags DeliveriesRange, 
 	}
 	raiseEvent(ch.opt.notifier, event)
 
-	if tags.MustAck {
-		ch.Ack(tags.Last, true)
+	if mustAck && len(messages) != 0 {
+		ch.Ack(messages[len(messages)-1].DeliveryTag, true)
 	}
 }
 

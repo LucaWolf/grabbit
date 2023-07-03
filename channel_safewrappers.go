@@ -50,6 +50,14 @@ func (ch *Channel) Cancel(consumer string, noWait bool) error {
 	return nil
 }
 
+// Reject safely wraps the base channel Ack.
+func (ch *Channel) Reject(tag uint64, requeue bool) error {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	return ch.baseChan.super.Reject(tag, requeue)
+}
+
 // Ack safely wraps the base channel Ack.
 func (ch *Channel) Ack(tag uint64, multiple bool) error {
 	ch.baseChan.mu.Lock()
@@ -67,11 +75,21 @@ func (ch *Channel) Nack(tag uint64, multiple bool, requeue bool) error {
 }
 
 // QueueInspect safely wraps the base channel QueueInspect.
+//
+// Deprecated: use QueueDeclarePassive
 func (ch *Channel) QueueInspect(name string) (amqp.Queue, error) {
 	ch.baseChan.mu.Lock()
 	defer ch.baseChan.mu.Unlock()
 
 	return ch.baseChan.super.QueueInspect(name)
+}
+
+// QueueDeclarePassive safely wraps the base channel QueueInspect.
+func (ch *Channel) QueueDeclarePassive(name string, durable, autoDelete, exclusive, noWait bool, args amqp.Table) (amqp.Queue, error) {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	return ch.baseChan.super.QueueDeclarePassive(name, durable, autoDelete, exclusive, noWait, args)
 }
 
 // PublishWithContext safely wraps the base channel PublishWithContext.
@@ -82,12 +100,28 @@ func (ch *Channel) PublishWithContext(ctx context.Context, exchange, key string,
 	return ch.baseChan.super.PublishWithContext(ctx, exchange, key, mandatory, immediate, msg)
 }
 
+// PublishWithDeferredConfirmWithContext safely wraps the base channel PublishWithDeferredConfirmWithContext.
+func (ch *Channel) PublishWithDeferredConfirmWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) (*amqp.DeferredConfirmation, error) {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	return ch.baseChan.super.PublishWithDeferredConfirmWithContext(ctx, exchange, key, mandatory, immediate, msg)
+}
+
 // QueuePurge safely wraps the base channel QueuePurge.
 func (ch *Channel) QueuePurge(name string, noWait bool) (int, error) {
 	ch.baseChan.mu.Lock()
 	defer ch.baseChan.mu.Unlock()
 
 	return ch.baseChan.super.QueuePurge(name, noWait)
+}
+
+// GetNextPublishSeqNo safely wraps the base channel GetNextPublishSeqNo
+func (ch *Channel) GetNextPublishSeqNo() uint64 {
+	ch.paused.mu.RLock()
+	defer ch.paused.mu.RUnlock()
+
+	return ch.baseChan.super.GetNextPublishSeqNo()
 }
 
 // QueueDelete safely wraps the base channel QueueDelete.
@@ -105,6 +139,14 @@ func (ch *Channel) QueueDeclare(name string, durable, autoDelete, exclusive, noW
 	defer ch.baseChan.mu.Unlock()
 
 	return ch.baseChan.super.QueueDeclare(name, durable, autoDelete, exclusive, noWait, args)
+}
+
+// ExchangeDelete safely wraps the base channel ExchangeDelete.
+func (ch *Channel) ExchangeDelete(name string, ifUnused, noWait bool) error {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	return ch.baseChan.super.ExchangeDelete(name, ifUnused, noWait)
 }
 
 // ExchangeDeclare safely wraps the base channel ExchangeDeclare
@@ -142,7 +184,8 @@ func (ch *Channel) Queue() string {
 
 // Channel returns the low level library channel for further direct access to its Super() low level channel.
 // Use sparingly and prefer using the predefined [Channel] wrapping methods instead.
-// Pair usage with the locking/unlocking routines for safety!
+// Pair usage with the provided full [Lock][UnLock] or read [RLock][RUnlock]
+// locking/unlocking mechanisms for safety!
 func (ch *Channel) Channel() *SafeBaseChan {
 	return &ch.baseChan
 }

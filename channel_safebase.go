@@ -38,6 +38,17 @@ func (c *SafeBaseChan) UnLock() {
 	c.mu.Unlock()
 }
 
+// RLock acquires read locking of the low level channel [Super] for amqp operations.
+// Use sparingly and fast as this locks-out the channel recovery!
+func (c *SafeBaseChan) RLock() {
+	c.mu.Lock()
+}
+
+// RUnlock releases the low level channel [Super] read lock.
+func (c *SafeBaseChan) RUnlock() {
+	c.mu.Unlock()
+}
+
 // set is a private method for updating the super channel (post recovery)
 func (c *SafeBaseChan) set(super *amqp.Channel) {
 	c.mu.Lock()

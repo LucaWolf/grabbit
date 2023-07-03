@@ -22,7 +22,7 @@ type ConsumerUsageOptions struct {
 	ConsumerExclusive bool          // see [amqp.Consume]
 	ConsumerNoLocal   bool          // see [amqp.Consume]
 	ConsumerNoWait    bool          // see [amqp.Consume]
-	ConsumerArgs      amqp.Table    // core proprieties
+	ConsumerArgs      amqp.Table    // core properties
 }
 
 type ConsumerOptions struct {

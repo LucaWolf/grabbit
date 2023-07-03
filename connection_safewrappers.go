@@ -38,8 +38,6 @@ func (conn *Connection) Close() error {
 }
 
 // Channel safely wraps the amqp connection Channel() function.
-// The lock is used internally so there is no need for the application layer
-// to access the lock directly.
 func (conn *Connection) Channel() (*amqp.Channel, error) {
 	conn.baseConn.mu.Lock()
 	defer conn.baseConn.mu.Unlock()
