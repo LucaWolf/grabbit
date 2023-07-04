@@ -1,8 +1,6 @@
 package grabbit
 
 import (
-	"errors"
-
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -46,7 +44,7 @@ func (conn *Connection) Channel() (*amqp.Channel, error) {
 		return conn.baseConn.super.Channel()
 	}
 
-	return nil, errors.New("connection not available")
+	return nil, amqp.ErrClosed
 }
 
 // Connection returns the safe base connection and thus indirectly the low level library connection.

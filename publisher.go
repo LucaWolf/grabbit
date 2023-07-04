@@ -1,7 +1,6 @@
 package grabbit
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
@@ -74,7 +73,7 @@ func NewPublisher(conn *Connection, opt PublisherOptions, optionFuncs ...func(*C
 func (p *Publisher) Publish(msg amqp.Publishing) error {
 
 	if p.channel.IsClosed() {
-		return errors.New("publisher channel is not yet available. Try again later")
+		return amqp.ErrClosed
 	}
 
 	return p.channel.PublishWithContext(
@@ -86,7 +85,7 @@ func (p *Publisher) Publish(msg amqp.Publishing) error {
 func (p *Publisher) PublishWithOptions(opt PublisherOptions, msg amqp.Publishing) error {
 
 	if p.channel.IsClosed() {
-		return errors.New("publisher channel is not yet available. Try again later")
+		return amqp.ErrClosed
 	}
 
 	return p.channel.PublishWithContext(

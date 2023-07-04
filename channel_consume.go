@@ -51,6 +51,8 @@ func consumerRun(ch *Channel) {
 		case <-ch.opt.ctx.Done(): // main chan and notifiers.Consumers should also be gone
 			ch.Cancel(ch.opt.implParams.ConsumerName, true)
 			if len(messages) != 0 {
+				// conn/chan are gone, cannot ACK/NAK anyways
+				mustAck = false
 				ch.opt.cbProcessMessages(&props, messages, mustAck, ch)
 			}
 			return
@@ -58,6 +60,8 @@ func consumerRun(ch *Channel) {
 			if !ok {
 				ch.Cancel(ch.opt.implParams.ConsumerName, true)
 				if len(messages) != 0 {
+					// conn/chan are gone, cannot ACK/NAK anyways
+					mustAck = false
 					ch.opt.cbProcessMessages(&props, messages, mustAck, ch)
 				}
 				return
