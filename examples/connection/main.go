@@ -14,11 +14,10 @@ import (
 
 var (
 	ConnectionName = "conn.main"
-	ChannelName    = "chan.main"
 )
 
 func Down(name string, err grabbit.OptionalError) bool {
-	log.Printf("callback_down {%s} went down with {%s}", name, err)
+	log.Printf("callback_down: {%s} went down with {%s}", name, err)
 	return true // want continuing
 }
 
@@ -32,13 +31,14 @@ func Reattempting(name string, retry int) bool {
 }
 
 func main() {
-	connStatusChan := make(chan grabbit.Event, 10)
+	connStatusChan := make(chan grabbit.Event, 32)
 
-	// await and log any infrastructure notifications
+	// capture status notifications and perform desired actions based on this
+	// like e.g. cancel the global context, adjust metrics, exit the app... whatever your requirements fancy
 	go func() {
 		for event := range connStatusChan {
 			log.Print("notification: ", event)
-			// _ = event
+			// process any event by its combination of .SourceType, .SourceName and .Kind
 		}
 	}()
 
@@ -51,16 +51,9 @@ func main() {
 		grabbit.WithConnectionOptionRecovering(Reattempting),
 	)
 
-	ch := grabbit.NewChannel(conn,
-		grabbit.WithChannelOptionName(ChannelName),
-		grabbit.WithChannelOptionNotification(connStatusChan),
-	)
-
 	defer func() {
 		fmt.Println("app closing connection and dependencies")
-		if err := ch.Close(); err != nil {
-			log.Print("cannot close ch: ", err)
-		}
+
 		if err := conn.Close(); err != nil {
 			log.Print("cannot close conn: ", err)
 		}
