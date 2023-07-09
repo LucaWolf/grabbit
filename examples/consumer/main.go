@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -14,25 +16,19 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-var (
-	ConnectionName = "conn.main"
-	ChannelName    = "chan.publisher.routing.example"
-	ExchangeName   = "broadcast"
-)
-
 // CallbackWhenDown
-func OnDown(name string, err grabbit.OptionalError) bool {
+func OnConsumerDown(name string, err grabbit.OptionalError) bool {
 	log.Printf("callback: {%s} went down with {%s}", name, err)
 	return true // want continuing
 }
 
 // CallbackWhenUp
-func OnUp(name string) {
+func OnConsumerUp(name string) {
 	log.Printf("callback: {%s} went up", name)
 }
 
 // CallbackWhenRecovering
-func OnReattempting(name string, retry int) bool {
+func OnConsumerReattempting(name string, retry int) bool {
 	log.Printf("callback: connection establish {%s} retry count {%d}", name, retry)
 	return true // want continuing
 }
@@ -47,72 +43,54 @@ func OnNotifyReturn(confirm amqp.Return, ch *grabbit.Channel) {
 	log.Printf("callback: publish returned from queue [%s]\n", ch.Queue())
 }
 
-func publishSomeLogs(publisher *grabbit.Publisher,
-	opt grabbit.PublisherOptions,
-	start, end int) {
+func PublishMsg(publisher *grabbit.Publisher, start, end int) {
 	message := amqp.Publishing{}
 	data := make([]byte, 0, 64)
 	buff := bytes.NewBuffer(data)
 
 	for i := start; i < end; i++ {
-		<-time.After(250 * time.Millisecond)
 		buff.Reset()
-		buff.WriteString(fmt.Sprintf("%s number %04d", opt.Key, i))
-
-		log.Println("going to send:", buff.String())
-
+		buff.WriteString(fmt.Sprintf("test number %04d", i))
 		message.Body = buff.Bytes()
-		if err := publisher.PublishWithOptions(opt, message); err != nil {
+
+		if err := publisher.Publish(message); err != nil {
 			log.Println("publishing failed with: ", err)
 		}
 	}
 }
 
-func MsgHandler(props *grabbit.DeliveriesProperties, messages []grabbit.DeliveryData, mustAck bool, ch *grabbit.Channel) {
-	log.Printf("APP: consumer [%s] received [%d] messages:\n", props.ConsumerTag, len(messages))
-	for _, msg := range messages {
-		log.Printf("  [%s] -- messages: %s\n", props.ConsumerTag, string(msg.Body))
+func MsgHandler(rnd *rand.Rand, mu *sync.Mutex) grabbit.CallbackProcessMessages {
+	return func(props *grabbit.DeliveriesProperties, messages []grabbit.DeliveryData, mustAck bool, ch *grabbit.Channel) {
+		for _, msg := range messages {
+			// only global function is goroutine safe, not rand.Rand objects
+			mu.Lock()
+			r := rnd.Int()
+			mu.Unlock()
+			action := "ACK"
+			if r%2 == 0 {
+				action = "NAK - expect this again later on"
+			}
+			log.Printf("  [%s] got message: %s -- [%s]\n", props.ConsumerTag, string(msg.Body), action)
+
+			if mustAck && len(messages) != 0 {
+				// for fun, put back on the queue for other consumers to reap the benefits
+				if r%2 == 0 {
+					ch.Nack(msg.DeliveryTag, false, true)
+				} else {
+					ch.Ack(msg.DeliveryTag, false)
+				}
+			}
+		}
 	}
-
-	if mustAck && len(messages) != 0 {
-		ch.Ack(messages[len(messages)-1].DeliveryTag, true) // cb executes in library space, no need to lock safeguard
-	}
-}
-
-func consumeSome(conn *grabbit.Connection, tag string) {
-	// create an ephemeral un-named queue, bound to the exchange
-	topos := make([]*grabbit.TopologyOptions, 0, 8)
-	topos = append(topos, &grabbit.TopologyOptions{
-		Name:          "", // leave blank for auto-allocation
-		IsDestination: true,
-		Declare:       true,
-		AutoDelete:    true, // when all clients disconnect
-		Bind: grabbit.TopologyBind{
-			Enabled: true,
-			Peer:    ExchangeName,
-		},
-	})
-
-	opt := grabbit.DefaultConsumerOptions()
-
-	opt.WithName(tag).
-		WithPrefetchCount(3).
-		WithQueue("auto_generated_will_take_over"). // IsDestination above
-		WithPrefetchTimeout(20 * time.Second)
-
-	// start a consumer
-	grabbit.NewConsumer(conn, opt,
-		grabbit.WithChannelOptionName("chan:"+tag),
-		grabbit.WithChannelOptionTopology(topos),
-		grabbit.WithChannelOptionProcessor(MsgHandler),
-		grabbit.WithChannelOptionDown(OnDown),
-	)
-
-	// exit here but the consumer library executes till completion
-	// We could implement a waiter here if really wanted: consumer channel will close on timeout
 }
 
 func main() {
+	ConnectionName := "conn.main"
+	PublisherName := "chan.publisher.example"
+	ConsumerOneName := "consumer.one"
+	ConsumerTwoName := "consumer.two"
+	QueueName := "workload"
+
 	events := make(chan grabbit.Event, 10)
 	defer close(events)
 
@@ -131,33 +109,24 @@ func main() {
 		grabbit.WithConnectionOptionContext(ctxMaster),
 		grabbit.WithConnectionOptionName(ConnectionName),
 		grabbit.WithConnectionOptionNotification(events),
-		grabbit.WithConnectionOptionDown(OnDown),
-		grabbit.WithConnectionOptionUp(OnUp),
-		grabbit.WithConnectionOptionRecovering(OnReattempting),
 	)
 
 	opt := grabbit.DefaultPublisherOptions()
-	opt.WithContext(ctxMaster).WithConfirmationsCount(20)
+	opt.WithKey(QueueName).WithContext(ctxMaster).WithConfirmationsCount(20)
 
 	topos := make([]*grabbit.TopologyOptions, 0, 8)
-	// create an ephemeral fanout type 'logs' exchange
 	topos = append(topos, &grabbit.TopologyOptions{
-		Name:          ExchangeName,
+		Name:          QueueName,
+		IsDestination: true, // this also sets the consumer queue link
+		Durable:       true,
 		Declare:       true,
-		IsExchange:    true,
-		IsDestination: true,
-		Kind:          "fanout",
 	})
 
 	publisher := grabbit.NewPublisher(conn, opt,
-		grabbit.WithChannelOptionName(ChannelName),
+		grabbit.WithChannelOptionName(PublisherName),
 		grabbit.WithChannelOptionTopology(topos),
 		grabbit.WithChannelOptionNotifyPublish(OnNotifyPublish),
 		grabbit.WithChannelOptionNotifyReturn(OnNotifyReturn),
-		grabbit.WithChannelOptionDown(OnDown),
-		// grabbit.WithChannelOptionContext(ctxMaster), -- inherited from connection
-		// grabbit.WithChannelOptionDelay(some_delayer), -- inherited from connection
-		// grabbit.WithChannelOptionNotification(events), -- inherited from connection
 	)
 
 	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
@@ -167,19 +136,40 @@ func main() {
 		log.Println("EXIT")
 		return
 	}
+	PublishMsg(publisher, 0, 35)
 
-	go consumeSome(conn, "CONSUMER--ONE")
-	go consumeSome(conn, "CONSUMER--TWO")
+	rnd := rand.New(rand.NewSource(773274))
+	mu := sync.Mutex{}
 
-	// routine key is ignored for fanout exchanges
-	opt.WithExchange(ExchangeName).WithKey("alpha")
-	publishSomeLogs(publisher, opt, 1, 10)
-	opt.WithExchange(ExchangeName).WithKey("beta")
-	publishSomeLogs(publisher, opt, 1, 10)
-	opt.WithExchange(ExchangeName).WithKey("gamma")
-	publishSomeLogs(publisher, opt, 1, 10)
-	opt.WithExchange(ExchangeName).WithKey("delta")
-	publishSomeLogs(publisher, opt, 1, 10)
+	optConsumerOne := grabbit.DefaultConsumerOptions()
+	optConsumerOne.WithName(ConsumerOneName).
+		WithPrefetchCount(1).
+		// WithQueue("auto_generated_will_take_over"). // IsDestination above
+		WithPrefetchTimeout(7 * time.Second)
+	// start this consumer
+	_ = grabbit.NewConsumer(conn, optConsumerOne,
+		grabbit.WithChannelOptionName("chan."+ConsumerOneName),
+		grabbit.WithChannelOptionTopology(topos),
+		grabbit.WithChannelOptionDown(OnConsumerDown),
+		grabbit.WithChannelOptionUp(OnConsumerUp),
+		grabbit.WithChannelOptionRecovering(OnConsumerReattempting),
+		grabbit.WithChannelOptionProcessor(MsgHandler(rnd, &mu)),
+	)
+
+	optConsumerTwo := grabbit.DefaultConsumerOptions()
+	optConsumerTwo.WithName(ConsumerTwoName).
+		WithPrefetchCount(1).
+		// WithQueue("auto_generated_will_take_over"). // IsDestination above
+		WithPrefetchTimeout(7 * time.Second)
+	// start this consumer
+	_ = grabbit.NewConsumer(conn, optConsumerTwo,
+		grabbit.WithChannelOptionName("chan."+ConsumerTwoName),
+		grabbit.WithChannelOptionTopology(topos),
+		grabbit.WithChannelOptionDown(OnConsumerDown),
+		grabbit.WithChannelOptionUp(OnConsumerUp),
+		grabbit.WithChannelOptionRecovering(OnConsumerReattempting),
+		grabbit.WithChannelOptionProcessor(MsgHandler(rnd, &mu)),
+	)
 
 	defer func() {
 		ctxCancel()

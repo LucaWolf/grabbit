@@ -1,6 +1,8 @@
 package grabbit
 
-import "time"
+import (
+	"time"
+)
 
 func consumerSetup(ch *Channel) {
 	ch.notifiers.Consumer = nil
@@ -68,7 +70,7 @@ func consumerRun(ch *Channel) {
 			}
 
 			// set props
-			if len(messages) == 1 {
+			if len(messages) == 0 {
 				props = DeliveryPropsFrom(&msg)
 			}
 			// set data payload
