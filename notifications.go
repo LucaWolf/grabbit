@@ -51,6 +51,7 @@ const (
 type Event struct {
 	SourceType ClientType    // origin type
 	SourceName string        // origin tag
+	TargetName string        // affected tag
 	Kind       EventType     // type of event
 	Err        OptionalError // low level error
 }

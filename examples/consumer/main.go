@@ -35,12 +35,12 @@ func OnConsumerReattempting(name string, retry int) bool {
 
 // CallbackNotifyPublish
 func OnNotifyPublish(confirm amqp.Confirmation, ch *grabbit.Channel) {
-	log.Printf("callback: publish confirmed [%v] from queue [%s]\n", confirm, ch.Queue())
+	log.Printf("callback: publish confirmed [%v] from  [%s][%s]\n", confirm, ch.Name(), ch.Queue())
 }
 
 // CallbackNotifyReturn
 func OnNotifyReturn(confirm amqp.Return, ch *grabbit.Channel) {
-	log.Printf("callback: publish returned from queue [%s]\n", ch.Queue())
+	log.Printf("callback: publish returned from [%s][%s]\n", ch.Name(), ch.Queue())
 }
 
 func PublishMsg(publisher *grabbit.Publisher, start, end int) {
@@ -70,7 +70,7 @@ func MsgHandler(rnd *rand.Rand, mu *sync.Mutex) grabbit.CallbackProcessMessages 
 			if r%2 == 0 {
 				action = "NAK - expect this again later on"
 			}
-			log.Printf("  [%s] got message: %s -- [%s]\n", props.ConsumerTag, string(msg.Body), action)
+			log.Printf("  [%s][%s] got message: %s -- [%s]\n", ch.Name(), props.ConsumerTag, string(msg.Body), action)
 
 			if mustAck && len(messages) != 0 {
 				// for fun, put back on the queue for other consumers to reap the benefits

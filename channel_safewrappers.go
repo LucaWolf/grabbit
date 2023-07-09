@@ -227,6 +227,11 @@ func (ch *Channel) Queue() string {
 	return ch.queue
 }
 
+// Name returns the tag defined originally when creating this channel
+func (ch *Channel) Name() string {
+	return ch.opt.name
+}
+
 // Channel returns the low level library channel for further direct access to its Super() low level channel.
 // Use sparingly and prefer using the predefined [Channel] wrapping methods instead.
 // Pair usage with the provided full [Lock][UnLock] or read [RLock][RUnlock]

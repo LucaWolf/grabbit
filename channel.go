@@ -246,7 +246,8 @@ func chanMakeTopology(ch *Channel, recovering bool) {
 
 		event := Event{
 			SourceType: CliChannel,
-			SourceName: t.Name,
+			SourceName: ch.opt.name,
+			TargetName: t.Name,
 			Kind:       EventDefineTopology,
 		}
 
