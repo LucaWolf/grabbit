@@ -144,7 +144,7 @@ func main() {
 	optConsumerOne := grabbit.DefaultConsumerOptions()
 	optConsumerOne.WithName(ConsumerOneName).
 		WithPrefetchCount(1).
-		// WithQueue("auto_generated_will_take_over"). // IsDestination above
+		WithQueue("auto_generated_will_take_over"). // IsDestination above
 		WithPrefetchTimeout(7 * time.Second)
 	// start this consumer
 	_ = grabbit.NewConsumer(conn, optConsumerOne,
@@ -159,7 +159,7 @@ func main() {
 	optConsumerTwo := grabbit.DefaultConsumerOptions()
 	optConsumerTwo.WithName(ConsumerTwoName).
 		WithPrefetchCount(1).
-		// WithQueue("auto_generated_will_take_over"). // IsDestination above
+		WithQueue("auto_generated_will_take_over"). // IsDestination above
 		WithPrefetchTimeout(7 * time.Second)
 	// start this consumer
 	_ = grabbit.NewConsumer(conn, optConsumerTwo,
