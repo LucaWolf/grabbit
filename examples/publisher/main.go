@@ -14,26 +14,18 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-var (
-	ConnectionName = "conn.main"
-	ChannelName    = "chan.publisher.example"
-	QueueName      = "workload"
-)
-
 // CallbackWhenDown
-func OnDown(name string, err grabbit.OptionalError) bool {
-	log.Printf("callback: {%s} went down with {%s}", name, err)
+func OnPubDown(name string, err grabbit.OptionalError) bool {
+	log.Printf("callback_down: {%s} went down with {%s}", name, err)
 	return true // want continuing
 }
 
-// CallbackWhenUp
-func OnUp(name string) {
-	log.Printf("callback: {%s} went up", name)
+func OnPubUp(name string) {
+	log.Printf("callback_up: {%s} went up", name)
 }
 
-// CallbackWhenRecovering
-func OnReattempting(name string, retry int) bool {
-	log.Printf("callback: connection establish {%s} retry count {%d}", name, retry)
+func OnPubReattempting(name string, retry int) bool {
+	log.Printf("callback_redo: {%s} retry count {%d}", name, retry)
 	return true // want continuing
 }
 
@@ -47,19 +39,18 @@ func OnNotifyReturn(confirm amqp.Return, ch *grabbit.Channel) {
 	log.Printf("callback: publish returned from queue [%s]\n", ch.Queue())
 }
 
-func publishSomeIDs(publisher *grabbit.Publisher, start, end int) {
+func PublishMsg(publisher *grabbit.Publisher, start, end int) {
 	message := amqp.Publishing{}
 	data := make([]byte, 0, 64)
 	buff := bytes.NewBuffer(data)
 
 	for i := start; i < end; i++ {
-		<-time.After(3 * time.Second)
+		<-time.After(1 * time.Second)
 		buff.Reset()
-		buff.WriteString(fmt.Sprintf("test number: %04d", i))
-
+		buff.WriteString(fmt.Sprintf("test number %04d", i))
+		message.Body = buff.Bytes()
 		log.Println("going to send:", buff.String())
 
-		message.Body = buff.Bytes()
 		if err := publisher.Publish(message); err != nil {
 			log.Println("publishing failed with: ", err)
 		}
@@ -67,15 +58,17 @@ func publishSomeIDs(publisher *grabbit.Publisher, start, end int) {
 }
 
 func main() {
-	connStatusChan := make(chan grabbit.Event, 10)
-	defer close(connStatusChan)
+	ConnectionName := "conn.main"
+	ChannelName := "chan.publisher.example"
+	QueueName := "workload"
 
 	ctxMaster, ctxCancel := context.WithCancel(context.TODO())
+	pubStatusChan := make(chan grabbit.Event, 32)
 
 	// await and log any infrastructure notifications
 	go func() {
-		for event := range connStatusChan {
-			log.Println("notification: ", event)
+		for event := range pubStatusChan {
+			log.Println("publisher.notification: ", event)
 			// _ = event
 		}
 	}()
@@ -84,15 +77,10 @@ func main() {
 		"amqp://guest:guest@localhost", amqp.Config{},
 		grabbit.WithConnectionOptionContext(ctxMaster),
 		grabbit.WithConnectionOptionName(ConnectionName),
-		grabbit.WithConnectionOptionNotification(connStatusChan),
-		grabbit.WithConnectionOptionDown(OnDown),
-		grabbit.WithConnectionOptionUp(OnUp),
-		grabbit.WithConnectionOptionRecovering(OnReattempting),
-		// grabbit.WithConnectionOptionDelay(some_delayer), -- falls back to DefaultDelayer(7500ms)
 	)
 
-	params := grabbit.DefaultPublisherOptions()
-	params.WithKey(QueueName).WithContext(ctxMaster).WithConfirmationsCount(20)
+	pubOpt := grabbit.DefaultPublisherOptions()
+	pubOpt.WithKey(QueueName).WithContext(ctxMaster).WithConfirmationsCount(20)
 
 	topos := make([]*grabbit.TopologyOptions, 0, 8)
 	topos = append(topos, &grabbit.TopologyOptions{
@@ -102,15 +90,16 @@ func main() {
 		Declare:       true,
 	})
 
-	publisher := grabbit.NewPublisher(conn, params,
+	publisher := grabbit.NewPublisher(conn, pubOpt,
 		grabbit.WithChannelOptionContext(ctxMaster),
 		grabbit.WithChannelOptionName(ChannelName),
 		grabbit.WithChannelOptionTopology(topos),
+		grabbit.WithChannelOptionNotification(pubStatusChan),
+		grabbit.WithChannelOptionDown(OnPubDown),
+		grabbit.WithChannelOptionUp(OnPubUp),
+		grabbit.WithChannelOptionRecovering(OnPubReattempting),
 		grabbit.WithChannelOptionNotifyPublish(OnNotifyPublish),
 		grabbit.WithChannelOptionNotifyReturn(OnNotifyReturn),
-		// grabbit.WithChannelOptionContext(ctxMaster), -- inherited from connection
-		// grabbit.WithChannelOptionDelay(some_delayer), -- inherited from connection
-		// grabbit.WithChannelOptionNotification(connStatusChan), -- inherited from connection
 	)
 
 	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
@@ -121,23 +110,21 @@ func main() {
 		return
 	}
 
-	publishSomeIDs(publisher, 0, 5) // smooth operator
+	PublishMsg(publisher, 0, 5)
 
 	defer func() {
 		log.Println("app closing connection and dependencies")
 
-		if err := conn.Close(); err != nil {
-			log.Println("cannot close conn: ", err)
-		}
-
-		publishSomeIDs(publisher, 5, 10) // expect failures
-
 		if err := publisher.Close(); err != nil {
-			log.Println("cannot close ch: ", err)
+			log.Println("cannot close publisher: ", err)
 		}
+		// associated chan is gone, can no longer send data
+		PublishMsg(publisher, 5, 10) // expect failures
 
-		// reconnect loop should be dead by now... no further notifications should be observed
-		<-time.After(15 * time.Second)
+		if err := conn.Close(); err != nil {
+			log.Print("cannot close conn: ", err)
+		}
+		<-time.After(3 * time.Second)
 		log.Println("EXIT")
 	}()
 
