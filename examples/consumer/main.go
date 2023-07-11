@@ -179,7 +179,7 @@ func main() {
 
 	// block main thread - wait for shutdown signal
 	sigs := make(chan os.Signal, 1)
-	done := make(chan bool, 1)
+	done := make(chan struct{})
 
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 

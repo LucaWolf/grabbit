@@ -20,12 +20,12 @@ func AwaitDown(ch *grabbit.Channel, timeout, pollFreq time.Duration) bool {
 	// status polling
 	ticker := time.NewTicker(pollFreq)
 	defer ticker.Stop()
-	done := make(chan bool)
+	done := make(chan struct{})
 
 	// session timeout
 	go func() {
 		time.Sleep(timeout)
-		done <- true
+		close(done)
 	}()
 
 	for {
@@ -63,8 +63,8 @@ func main() {
 		grabbit.WithChannelOptionNotification(betaStatusChan),
 	)
 
-	chSignalBetaUp := make(chan bool)
-	chSignalAlphaUp := make(chan bool)
+	chSignalBetaUp := make(chan struct{})
+	chSignalAlphaUp := make(chan struct{})
 
 	// WARN: sudden death via ctx cancellation will not provide any EventClosed feedback
 	// this is useless in our test case, hence the supplementary AwaitDown()
