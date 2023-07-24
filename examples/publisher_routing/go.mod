@@ -1,4 +1,4 @@
-module publisher
+module publisher_routing
 
 go 1.19
 
