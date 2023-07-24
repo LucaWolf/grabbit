@@ -25,7 +25,8 @@ func publishSomeLogs(
 
 	for i := start; i < end; i++ {
 		buff.Reset()
-		buff.WriteString(fmt.Sprintf("msg ID %04d for target %s", i, opt.Key))
+		buff.WriteString(fmt.Sprintf("msg ID %04d for target (%s, %s)",
+			i, opt.Exchange, opt.Key))
 
 		message.Body = buff.Bytes()
 		if err := publisher.PublishWithOptions(opt, message); err != nil {
@@ -35,14 +36,14 @@ func publishSomeLogs(
 }
 
 func main() {
-	const KEY_ALERTS = "k.alert"         // routing key into pagers queue
-	const KEY_INFO = "k.info"            // routing key into emails queue
-	const KEY_TOPIC_ALERTS = "*.alerts"  // alerts key mask for topic exchange
-	const KEY_TOPIC_INFO = "*.info"      // key mask for topic  exchange
-	const QUEUE_PAGERS = "q.pagers"      // alerts deposit for alert routed messages
-	const QUEUE_EMAILS = "q.emails"      // emails deposit for info routed messages
-	const EXCHANGE_LOGS = "e.logs"       // direct key dispatch exchange
-	const EXCHANGE_GATEWAY = "e.gateway" // by topic dispatch exchange
+	const KEY_ALERTS = "key.alert"           // routing key into pagers queue
+	const KEY_INFO = "key.info"              // routing key into emails queue
+	const KEY_TOPIC_ALERTS = "*.alerts"      // alerts key mask for topic exchange
+	const KEY_TOPIC_INFO = "*.info"          // key mask for topic  exchange
+	const QUEUE_PAGERS = "queue.pagers"      // alerts deposit for alert routed messages
+	const QUEUE_EMAILS = "queue.emails"      // emails deposit for info routed messages
+	const EXCHANGE_LOGS = "exch.direct.logs" // direct key dispatch exchange
+	const EXCHANGE_GATEWAY = "exch.topic"    // by topic dispatch exchange
 
 	connStatusChan := make(chan grabbit.Event, 10)
 	defer close(connStatusChan)
@@ -62,9 +63,6 @@ func main() {
 		grabbit.WithConnectionOptionName("conn.main"),
 		grabbit.WithConnectionOptionNotification(connStatusChan),
 	)
-
-	opt := grabbit.DefaultPublisherOptions()
-	opt.WithContext(ctxMaster).WithConfirmationsCount(20)
 
 	topos := make([]*grabbit.TopologyOptions, 0, 8)
 	// create an ephemeral 'logs' exchange
@@ -125,6 +123,9 @@ func main() {
 		},
 	})
 
+	opt := grabbit.DefaultPublisherOptions()
+	opt.WithContext(ctxMaster).WithConfirmationsCount(20)
+
 	publisher := grabbit.NewPublisher(conn, opt,
 		grabbit.WithChannelOptionName("chan.publisher"),
 		grabbit.WithChannelOptionTopology(topos),
@@ -137,21 +138,6 @@ func main() {
 		log.Println("EXIT")
 		return
 	}
-
-	// prove right all routing with consumers on QUEUE_EMAILS and QUEUE_PAGERS
-	optConsumer := grabbit.DefaultConsumerOptions()
-	optConsumer.WithPrefetchTimeout(7 * time.Second)
-
-	_ = grabbit.NewConsumer(conn,
-		*optConsumer.WithName("cons.emails").WithQueue(QUEUE_EMAILS),
-		grabbit.WithChannelOptionName("chan.emails/info"),
-		grabbit.WithChannelOptionProcessor(MsgHandler),
-	)
-	_ = grabbit.NewConsumer(conn,
-		*optConsumer.WithName("cons.alerts").WithQueue(QUEUE_PAGERS),
-		grabbit.WithChannelOptionName("chan.pagers/alert"),
-		grabbit.WithChannelOptionProcessor(MsgHandler),
-	)
 
 	// via direct exchange: these should end up on the QueueAlerts
 	opt.WithExchange(EXCHANGE_LOGS).WithKey(KEY_ALERTS)
@@ -172,6 +158,21 @@ func main() {
 	// via default gateway: straight onto the queue
 	opt.WithExchange("").WithKey(QUEUE_EMAILS)
 	publishSomeLogs(publisher, opt, 25, 30)
+
+	// prove right all routing with consumers on QUEUE_EMAILS and QUEUE_PAGERS
+	optConsumer := grabbit.DefaultConsumerOptions()
+	optConsumer.WithPrefetchTimeout(7 * time.Second)
+
+	_ = grabbit.NewConsumer(conn,
+		*optConsumer.WithName("cons.emails").WithQueue(QUEUE_EMAILS),
+		grabbit.WithChannelOptionName("chan.emails/info"),
+		grabbit.WithChannelOptionProcessor(MsgHandler),
+	)
+	_ = grabbit.NewConsumer(conn,
+		*optConsumer.WithName("cons.pagers").WithQueue(QUEUE_PAGERS),
+		grabbit.WithChannelOptionName("chan.pagers/alert"),
+		grabbit.WithChannelOptionProcessor(MsgHandler),
+	)
 
 	// block main thread - wait for shutdown signal
 	log.Println("awaiting signal")
