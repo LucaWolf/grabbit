@@ -224,6 +224,9 @@ func (ch *Channel) ExchangeDeclareWithTopology(t *TopologyOptions) error {
 // Queue returns the active (as indicated by [IsDestination] option in topology options) queue name.
 // Useful for finding the server assigned name.
 func (ch *Channel) Queue() string {
+	ch.baseChan.mu.RLock()
+	defer ch.baseChan.mu.RUnlock()
+
 	return ch.queue
 }
 

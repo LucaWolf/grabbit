@@ -264,7 +264,9 @@ func chanMakeTopology(ch *Channel, recovering bool) {
 		}
 		// save a copy for back reference
 		if t.IsDestination {
+			ch.baseChan.mu.Lock()
 			ch.queue = name
+			defer ch.baseChan.mu.Unlock()
 		}
 
 		raiseEvent(ch.opt.notifier, event)
