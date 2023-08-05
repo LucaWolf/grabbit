@@ -14,6 +14,8 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+const CONF_DELAY = 7 * time.Second
+
 // CallbackWhenDown
 func OnPubDown(name string, err grabbit.OptionalError) bool {
 	log.Printf("callback_down: {%s} went down with {%s}", name, err)
@@ -44,7 +46,7 @@ func OnNotifyReturn(confirm amqp.Return, ch *grabbit.Channel) {
 	log.Printf("callback: publish returned from queue [%s]\n", ch.Queue())
 }
 
-func PublishMsgOneByOne(publisher *grabbit.Publisher, records int) {
+func PublishMsgOneByOne(pub *grabbit.Publisher, records int) {
 	message := amqp.Publishing{}
 	data := make([]byte, 0, 64)
 	buff := bytes.NewBuffer(data)
@@ -54,34 +56,26 @@ func PublishMsgOneByOne(publisher *grabbit.Publisher, records int) {
 		buff.WriteString(fmt.Sprintf("one-by-one test number %04d", i))
 		message.Body = buff.Bytes()
 
-		if futureConfirm, err := publisher.PublishDeferredConfirm(message); err != nil {
+		if conf, err := pub.PublishDeferredConfirm(message); err != nil {
 			log.Println("publishing failed with: ", err)
 		} else {
-			confirmation := publisher.AwaitDeferedConfirmation(futureConfirm, 7*time.Second)
-
-			switch confirmation.Outcome {
+			switch pub.AwaitDeferedConfirmation(conf, CONF_DELAY).Outcome {
 			case grabbit.ConfirmationPrevious:
 				log.Printf("\033[91m previous \033[0m message confirmed request [%04X] vs.response [%04X]. TODO: keep waiting.\n",
-					confirmation.RequestSequence, confirmation.DeliveryTag)
+					conf.RequestSequence, conf.DeliveryTag)
 			case grabbit.ConfirmationDisabled:
 				log.Println("Not in confirmation mode (no DeferredConfirmation available).")
 			case grabbit.ConfirmationACK:
 				log.Printf("[%s][%s] \033[92m%s\033[0m with request [%04X] vs. response [%04X]\n",
-					confirmation.ChannelName, confirmation.Queue,
-					confirmation.Outcome,
-					confirmation.RequestSequence, confirmation.DeliveryTag,
+					conf.ChannelName, conf.Queue, conf.Outcome, conf.RequestSequence, conf.DeliveryTag,
 				)
 			case grabbit.ConfirmationNAK:
 				log.Printf("[%s][%s] \033[91m%s\033[0m with request [%04X] vs. response [%04X]\n",
-					confirmation.ChannelName, confirmation.Queue,
-					confirmation.Outcome,
-					confirmation.RequestSequence, confirmation.DeliveryTag,
+					conf.ChannelName, conf.Queue, conf.Outcome, conf.RequestSequence, conf.DeliveryTag,
 				)
 			default:
 				log.Printf("[%s][%s] \033[93m%s\033[0m with request [%04X] vs. response [%04X]\n",
-					confirmation.ChannelName, confirmation.Queue,
-					confirmation.Outcome,
-					confirmation.RequestSequence, confirmation.DeliveryTag,
+					conf.ChannelName, conf.Queue, conf.Outcome, conf.RequestSequence, conf.DeliveryTag,
 				)
 			}
 		}
@@ -89,7 +83,7 @@ func PublishMsgOneByOne(publisher *grabbit.Publisher, records int) {
 }
 
 // PublishMsgBulk tests that deliveries are received orderly
-func PublishMsgBulk(publisher *grabbit.Publisher, records int) {
+func PublishMsgBulk(pub *grabbit.Publisher, records int) {
 	message := amqp.Publishing{}
 	data := make([]byte, 0, 64)
 	buff := bytes.NewBuffer(data)
@@ -101,42 +95,35 @@ func PublishMsgBulk(publisher *grabbit.Publisher, records int) {
 		buff.WriteString(fmt.Sprintf("bulk test number %04d", i))
 		message.Body = buff.Bytes()
 
-		if confirmation, err := publisher.PublishDeferredConfirm(message); err != nil {
+		if conf, err := pub.PublishDeferredConfirm(message); err != nil {
 			log.Println("publishing failed with: ", err)
 		} else {
-			confs[i] = confirmation
+			confs[i] = conf
 		}
 	}
 	for i := 0; i < records; i++ {
-		confirmation := publisher.AwaitDeferedConfirmation(confs[i], 7*time.Second)
+		conf := confs[i]
 
-		switch confirmation.Outcome {
+		switch pub.AwaitDeferedConfirmation(conf, CONF_DELAY).Outcome {
 		case grabbit.ConfirmationPrevious:
 			log.Printf("\033[91mprevious\033[0m message confirmed request [%04X] vs.response [%04X]. TODO: keep waiting.\n",
-				confirmation.RequestSequence, confirmation.DeliveryTag)
+				conf.RequestSequence, conf.DeliveryTag)
 		case grabbit.ConfirmationDisabled:
 			log.Println("Not in confirmation mode (no DeferredConfirmation available).")
 		case grabbit.ConfirmationACK:
 			log.Printf("[%s][%s] \033[92m%s\033[0m with request [%04X] vs. response [%04X]\n",
-				confirmation.ChannelName, confirmation.Queue,
-				confirmation.Outcome,
-				confirmation.RequestSequence, confirmation.DeliveryTag,
+				conf.ChannelName, conf.Queue, conf.Outcome, conf.RequestSequence, conf.DeliveryTag,
 			)
 		case grabbit.ConfirmationNAK:
 			log.Printf("[%s][%s] \033[91m%s\033[0m with request [%04X] vs. response [%04X]\n",
-				confirmation.ChannelName, confirmation.Queue,
-				confirmation.Outcome,
-				confirmation.RequestSequence, confirmation.DeliveryTag,
+				conf.ChannelName, conf.Queue, conf.Outcome, conf.RequestSequence, conf.DeliveryTag,
 			)
 		default:
 			log.Printf("[%s][%s] \033[93m%s\033[0m with request [%04X] vs. response [%04X]\n",
-				confirmation.ChannelName, confirmation.Queue,
-				confirmation.Outcome,
-				confirmation.RequestSequence, confirmation.DeliveryTag,
+				conf.ChannelName, conf.Queue, conf.Outcome, conf.RequestSequence, conf.DeliveryTag,
 			)
 		}
 	}
-
 }
 
 func main() {

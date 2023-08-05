@@ -20,7 +20,7 @@ const (
 )
 
 // DeferredConfirmation wraps [amqp.DeferredConfirmation] with additional data.
-// It inherits all original functonality from the amqp object.
+// It inherits (by embedding) all original fields and functonality from the amqp object.
 type DeferredConfirmation struct {
 	*amqp.DeferredConfirmation                     // wrapped low level confirmation
 	Outcome                    ConfirmationOutcome // acknowledgment received stats
