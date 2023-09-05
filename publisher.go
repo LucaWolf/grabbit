@@ -90,7 +90,7 @@ func NewPublisher(conn *Connection, opt PublisherOptions, optionFuncs ...func(*C
 	}
 }
 
-func (p *Publisher) AwaitDeferedConfirmation(d *DeferredConfirmation, tmr time.Duration) *DeferredConfirmation {
+func (p *Publisher) AwaitDeferredConfirmation(d *DeferredConfirmation, tmr time.Duration) *DeferredConfirmation {
 	if d.DeferredConfirmation == nil {
 		d.Outcome = ConfirmationDisabled
 		return d

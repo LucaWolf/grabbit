@@ -59,7 +59,7 @@ func PublishMsgOneByOne(pub *grabbit.Publisher, records int) {
 		if conf, err := pub.PublishDeferredConfirm(message); err != nil {
 			log.Println("publishing failed with: ", err)
 		} else {
-			switch pub.AwaitDeferedConfirmation(conf, CONF_DELAY).Outcome {
+			switch pub.AwaitDeferredConfirmation(conf, CONF_DELAY).Outcome {
 			case grabbit.ConfirmationPrevious:
 				log.Printf("\033[91m previous \033[0m message confirmed request [%04X] vs.response [%04X]. TODO: keep waiting.\n",
 					conf.RequestSequence, conf.DeliveryTag)
@@ -104,7 +104,7 @@ func PublishMsgBulk(pub *grabbit.Publisher, records int) {
 	for i := 0; i < records; i++ {
 		conf := confs[i]
 
-		switch pub.AwaitDeferedConfirmation(conf, CONF_DELAY).Outcome {
+		switch pub.AwaitDeferredConfirmation(conf, CONF_DELAY).Outcome {
 		case grabbit.ConfirmationPrevious:
 			log.Printf("\033[91mprevious\033[0m message confirmed request [%04X] vs.response [%04X]. TODO: keep waiting.\n",
 				conf.RequestSequence, conf.DeliveryTag)
