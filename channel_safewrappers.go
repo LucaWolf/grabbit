@@ -34,7 +34,7 @@ func (ch *Channel) Close() error {
 		// calling Channel.Close() or Connection.Close().
 		err = ch.baseChan.super.Close()
 	}
-	ch.cancelCtx()
+	ch.opt.cancelCtx()
 
 	return err
 }
@@ -142,8 +142,8 @@ func (ch *Channel) QueuePurge(name string, noWait bool) (int, error) {
 
 // GetNextPublishSeqNo safely wraps the base channel GetNextPublishSeqNo
 func (ch *Channel) GetNextPublishSeqNo() uint64 {
-	ch.paused.mu.RLock()
-	defer ch.paused.mu.RUnlock()
+	ch.baseChan.mu.RLock()
+	defer ch.baseChan.mu.RUnlock()
 
 	if ch.baseChan.super != nil {
 		return ch.baseChan.super.GetNextPublishSeqNo()

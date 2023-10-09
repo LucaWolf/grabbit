@@ -4,6 +4,15 @@ import (
 	"time"
 )
 
+// defaultPayloadProcessor processes the payload using default logic.
+//
+// It takes the following parameters:
+//   - props: a pointer to DeliveriesProperties struct
+//   - messages: a slice of DeliveryData structs
+//   - mustAck: a boolean indicating whether the messages must be acknowledged
+//   - ch: a pointer to Channel struct
+//
+// It does not return any value.
 func defaultPayloadProcessor(props *DeliveriesProperties, messages []DeliveryData, mustAck bool, ch *Channel) {
 	event := Event{
 		SourceType: CliConsumer,

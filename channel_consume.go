@@ -4,6 +4,10 @@ import (
 	"time"
 )
 
+// consumerSetup sets up the consumer for the given channel.
+//
+// It takes a pointer to a Channel as a parameter.
+// There is no return value.
 func consumerSetup(ch *Channel) {
 	ch.notifiers.Consumer = nil
 
@@ -42,7 +46,14 @@ func consumerSetup(ch *Channel) {
 	ch.notifiers.Consumer = consumer
 }
 
-// consumerRun is the main receiving loop with distributing data processing to the user provided routine
+// consumerRun runs the consumer function.
+//
+// It consumes messages from the given channel and processes them.
+// When messages are received, they are stored in a slice called messages and processed when
+// the number of messages reaches a certain count or the prefetch timeout is reached.
+//
+// The function takes a pointer to a Channel as a parameter.
+// It does not return anything.
 func consumerRun(ch *Channel) {
 	var props DeliveriesProperties
 	mustAck := !ch.opt.implParams.ConsumerAutoAck

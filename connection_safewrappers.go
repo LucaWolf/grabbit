@@ -30,7 +30,7 @@ func (conn *Connection) Close() error {
 	if conn.baseConn.super != nil {
 		err = conn.baseConn.super.Close()
 	}
-	conn.cancelCtx()
+	conn.opt.cancelCtx()
 
 	return err
 }

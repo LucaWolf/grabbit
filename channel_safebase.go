@@ -9,10 +9,15 @@ import (
 // SafeBaseChan wraps in a concurrency safe way the low level amqp.Channel.
 type SafeBaseChan struct {
 	super *amqp.Channel // core channel
-	mu    sync.RWMutex  // makes this concurrent safe, maintenance wise only!
+	mu    sync.RWMutex  // makes this concurrent safe
 }
 
-// IsSet tests if the low level amqp channel is set.
+// IsSet checks whether the SafeBaseChan's super field is set.
+//
+// It does this by acquiring a read lock on the SafeBaseChan's mutex
+// and then deferring its release.
+//
+// Returns true if the super field is not nil, false otherwise.
 func (c *SafeBaseChan) IsSet() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

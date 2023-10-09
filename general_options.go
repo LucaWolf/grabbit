@@ -66,8 +66,9 @@ type DeliveriesProperties struct {
 	RoutingKey      string // basic.publish routing key
 }
 
-// From fills the 'prop' attributes with the values from
-// the original amqp delivery.
+// DeliveryPropsFrom generates a DeliveriesProperties struct from an amqp.Delivery.
+//
+// Takes a pointer to an amqp.Delivery as the parameter and returns a DeliveriesProperties struct.
 func DeliveryPropsFrom(d *amqp.Delivery) (prop DeliveriesProperties) {
 	return DeliveriesProperties{
 		Headers:         d.Headers,
@@ -97,8 +98,9 @@ type DeliveryData struct {
 	AppId       string          // application id
 }
 
-// DeliveryDataFrom creates data payload with the values from
-// the original amqp delivery.
+// DeliveryDataFrom creates a DeliveryData object from an amqp.Delivery object.
+//
+// It takes a pointer to an amqp.Delivery object as its parameter and returns a DeliveryData object.
 func DeliveryDataFrom(d *amqp.Delivery) (data DeliveryData) {
 	return DeliveryData{
 		Body:        d.Body,

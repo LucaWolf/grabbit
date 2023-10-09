@@ -57,7 +57,9 @@ type Event struct {
 }
 
 // raiseEvent pushes an event type from a particular connection or channel
-// over the provided notification channel.
+// over the provided notification channel. If the notification channel does not have enough capacity,
+// it ignores the event and does nothing.
+//
 // See WithChannelOptionNotification and WithConnectionOptionNotification
 func raiseEvent(ch chan Event, event Event) {
 	select {

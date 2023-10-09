@@ -31,7 +31,13 @@ type TopologyOptions struct {
 	Declare       bool         // gets created on start and also during recovery if Durable is false
 }
 
-// GetRouting returns the direction of binding two exchanges.
+// GetRouting returns the source and destination strings for the TopologyOptions struct.
+//
+// The source and destination strings are determined based on whether IsDestination is true or false.
+//   - if IsDestination is true, the source string is set to t.Bind.Peer and the destination string is set to t.Name.
+//   - if IsDestination is false, the source string is set to t.Name and the destination string is set to t.Bind.Peer.
+//
+// Returns the source and destination strings.
 func (t *TopologyOptions) GetRouting() (source, destination string) {
 	if t.IsDestination {
 		return t.Bind.Peer, t.Name

@@ -90,6 +90,10 @@ func NewPublisher(conn *Connection, opt PublisherOptions, optionFuncs ...func(*C
 	}
 }
 
+// AwaitDeferredConfirmation waits for the confirmation of a deferred action and updates its outcome.
+//
+// It takes in a deferred confirmation object and a time duration for the timeout.
+// It returns the updated deferred confirmation object.
 func (p *Publisher) AwaitDeferredConfirmation(d *DeferredConfirmation, tmr time.Duration) *DeferredConfirmation {
 	if d.DeferredConfirmation == nil {
 		d.Outcome = ConfirmationDisabled

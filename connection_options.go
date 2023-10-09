@@ -19,6 +19,7 @@ type ConnectionOptions struct {
 	cbUp        CallbackWhenUp         // callback when conn recovered
 	cbReconnect CallbackWhenRecovering // callback when recovering
 	ctx         context.Context        // cancellation context
+	cancelCtx   context.CancelFunc     // aborts the reconnect loop
 }
 
 // WithConnectionOptionDown stores the application space callback for

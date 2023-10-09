@@ -41,36 +41,69 @@ func DefaultPublisherOptions() PublisherOptions {
 	}
 }
 
+// WithConfirmationNoWait sets the ConfirmationNoWait field of the PublisherOptions struct.
+//
+// It takes a boolean parameter `confNoWait` and updates the `ConfirmationNoWait` field of the `PublisherOptions` struct to the value of `confNoWait`.
+// It returns a pointer to the `PublisherOptions` struct.
 func (opt *PublisherOptions) WithConfirmationNoWait(confNoWait bool) *PublisherOptions {
 	opt.ConfirmationNoWait = confNoWait
 	return opt
 }
 
+// WithContext sets the context for the PublisherOptions.
+//
+// ctx: The context to be set.
+// Returns: A pointer to PublisherOptions.
 func (opt *PublisherOptions) WithContext(ctx context.Context) *PublisherOptions {
 	opt.Context = ctx
 	return opt
 }
 
+// WithExchange sets the exchange for the PublisherOptions struct.
+//
+// Parameters:
+// - exchange: The exchange to set.
+//
+// Returns:
+// - *PublisherOptions: The updated PublisherOptions struct.
 func (opt *PublisherOptions) WithExchange(exchange string) *PublisherOptions {
 	opt.Exchange = exchange
 	return opt
 }
 
+// WithKey sets the key for the PublisherOptions.
+//
+// key: the key to set.
+// returns: a pointer to the PublisherOptions.
 func (opt *PublisherOptions) WithKey(key string) *PublisherOptions {
 	opt.Key = key
 	return opt
 }
 
+// WithMandatory sets the mandatory flag in the PublisherOptions struct.
+//
+// Parameters:
+// - mandatory: a boolean indicating whether the field should be mandatory.
+//
+// Returns:
+// - *PublisherOptions: a pointer to the PublisherOptions struct.
 func (opt *PublisherOptions) WithMandatory(mandatory bool) *PublisherOptions {
 	opt.Mandatory = mandatory
 	return opt
 }
 
+// WithImmediate sets the immediate flag of the PublisherOptions struct.
+//
+// It takes a boolean parameter `immediate` and returns a pointer to the updated PublisherOptions.
 func (opt *PublisherOptions) WithImmediate(immediate bool) *PublisherOptions {
 	opt.Immediate = immediate
 	return opt
 }
 
+// WithConfirmationsCount sets the number of confirmations required for publishing.
+//
+// count: The number of confirmations required.
+// *PublisherOptions: The updated PublisherOptions object.
 func (opt *PublisherOptions) WithConfirmationsCount(count int) *PublisherOptions {
 	opt.ConfirmationCount = count
 	return opt
