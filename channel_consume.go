@@ -2,15 +2,15 @@ package grabbit
 
 import (
 	"time"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // consumerSetup sets up the consumer for the given channel.
 //
 // It takes a pointer to a Channel as a parameter.
 // There is no return value.
-func consumerSetup(ch *Channel) {
-	ch.notifiers.Consumer = nil
-
+func consumerSetup(ch *Channel) <-chan amqp.Delivery {
 	if err := ch.baseChan.super.Qos(ch.opt.implParams.PrefetchCount, ch.opt.implParams.PrefetchSize, ch.opt.implParams.QosGlobal); err != nil {
 		event := Event{
 			SourceType: CliChannel,
@@ -43,7 +43,8 @@ func consumerSetup(ch *Channel) {
 		}
 		raiseEvent(ch.opt.notifier, event)
 	}
-	ch.notifiers.Consumer = consumer
+
+	return consumer
 }
 
 // consumerRun runs the consumer function.
@@ -54,7 +55,7 @@ func consumerSetup(ch *Channel) {
 //
 // The function takes a pointer to a Channel as a parameter.
 // It does not return anything.
-func consumerRun(ch *Channel) {
+func consumerRun(ch *Channel, consumer <-chan amqp.Delivery) {
 	var props DeliveriesProperties
 	mustAck := !ch.opt.implParams.ConsumerAutoAck
 	messages := make([]DeliveryData, 0, ch.opt.implParams.PrefetchCount)
@@ -69,7 +70,7 @@ func consumerRun(ch *Channel) {
 				ch.opt.cbProcessMessages(&props, messages, mustAck, ch)
 			}
 			return
-		case msg, ok := <-ch.notifiers.Consumer: // notifiers data
+		case msg, ok := <-consumer: // notifiers data
 			if !ok {
 				ch.Cancel(ch.opt.implParams.ConsumerName, true)
 				if len(messages) != 0 {
