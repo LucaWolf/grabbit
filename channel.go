@@ -108,10 +108,16 @@ func chanMarkPaused(ch *Channel, value bool) {
 //
 // Return type: None.
 func (ch *Channel) manager() {
+	var notifiers PersistentNotifiers
+	recovered := true
+
 	for {
-		notifiers := chanNotifiersRefresh(ch)
-		if ch.opt.implParams.IsConsumer {
-			go consumerRun(ch, notifiers.Consumer)
+		if recovered {
+			recovered = false
+			notifiers = chanNotifiersRefresh(ch)
+			if ch.opt.implParams.IsConsumer {
+				go consumerRun(ch, notifiers.Consumer)
+			}
 		}
 
 		select {
@@ -132,10 +138,12 @@ func (ch *Channel) manager() {
 			if !chanRecover(ch, SomeErrFromError(err, err != nil), notifierStatus) {
 				return
 			}
+			recovered = true
 		case reason, notifierStatus := <-notifiers.Cancel:
 			if !chanRecover(ch, SomeErrFromString(reason), notifierStatus) {
 				return
 			}
+			recovered = true
 		}
 	}
 }
