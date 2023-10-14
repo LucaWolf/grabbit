@@ -19,8 +19,6 @@ type ClientType int
 const (
 	CliConnection ClientType = iota
 	CliChannel
-	CliConsumer
-	CliPublisher
 )
 
 // EventType defines the class of alerts sent to the application layer.
@@ -56,16 +54,15 @@ type Event struct {
 	Err        OptionalError // low level error
 }
 
-// raiseEvent pushes an event type from a particular connection or channel
+// raise pushes an event type from a particular connection or channel
 // over the provided notification channel. If the notification channel does not have enough capacity,
 // it ignores the event and does nothing.
 //
 // See WithChannelOptionNotification and WithConnectionOptionNotification
-func raiseEvent(ch chan Event, event Event) {
+func (event Event) raise(ch chan Event) {
 	select {
 	case ch <- event:
 	default:
 		// chan has not enough capacity, dump this alert
-		_ = event
 	}
 }

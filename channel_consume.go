@@ -2,23 +2,22 @@ package grabbit
 
 import (
 	"time"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// consumerSetup sets up the consumer for the given channel.
+// consumer sets up the consumer feed for the given channel.
 //
 // It takes a pointer to a Channel as a parameter.
 // There is no return value.
-func consumerSetup(ch *Channel) {
-	ch.notifiers.Consumer = nil
-
+func (ch *Channel) consumer() <-chan amqp.Delivery {
 	if err := ch.baseChan.super.Qos(ch.opt.implParams.PrefetchCount, ch.opt.implParams.PrefetchSize, ch.opt.implParams.QosGlobal); err != nil {
-		event := Event{
+		Event{
 			SourceType: CliChannel,
 			SourceName: ch.opt.name,
 			Kind:       EventQos,
-			Err:        SomeErrFromError(err, err != nil),
-		}
-		raiseEvent(ch.opt.notifier, event)
+			Err:        SomeErrFromError(err, true),
+		}.raise(ch.opt.notifier)
 	}
 	// overwrite the passed queue to consume with the server assigned value
 	qName := ch.opt.implParams.ConsumerQueue
@@ -35,26 +34,26 @@ func consumerSetup(ch *Channel) {
 		ch.opt.implParams.ConsumerArgs)
 
 	if err != nil {
-		event := Event{
+		Event{
 			SourceType: CliChannel,
 			SourceName: ch.opt.name,
 			Kind:       EventConsume,
-			Err:        SomeErrFromError(err, err != nil),
-		}
-		raiseEvent(ch.opt.notifier, event)
+			Err:        SomeErrFromError(err, true),
+		}.raise(ch.opt.notifier)
 	}
-	ch.notifiers.Consumer = consumer
+
+	return consumer
 }
 
-// consumerRun runs the consumer function.
+// gobble runs the consumer function.
 //
 // It consumes messages from the given channel and processes them.
 // When messages are received, they are stored in a slice called messages and processed when
 // the number of messages reaches a certain count or the prefetch timeout is reached.
 //
-// The function takes a pointer to a Channel as a parameter.
-// It does not return anything.
-func consumerRun(ch *Channel) {
+// Parameters:
+//   - consumer: a channel of amqp.Delivery for receiving messages.
+func (ch *Channel) gobble(consumer <-chan amqp.Delivery) {
 	var props DeliveriesProperties
 	mustAck := !ch.opt.implParams.ConsumerAutoAck
 	messages := make([]DeliveryData, 0, ch.opt.implParams.PrefetchCount)
@@ -69,7 +68,7 @@ func consumerRun(ch *Channel) {
 				ch.opt.cbProcessMessages(&props, messages, mustAck, ch)
 			}
 			return
-		case msg, ok := <-ch.notifiers.Consumer: // notifiers data
+		case msg, ok := <-consumer: // notifiers data
 			if !ok {
 				ch.Cancel(ch.opt.implParams.ConsumerName, true)
 				if len(messages) != 0 {
@@ -96,17 +95,18 @@ func consumerRun(ch *Channel) {
 			}
 
 		case <-time.After(ch.opt.implParams.PrefetchTimeout):
-			event := Event{
-				SourceType: CliConsumer,
-				SourceName: ch.opt.name,
-				Kind:       EventDataExhausted,
-			}
+			kind := EventDataExhausted
 			if len(messages) != 0 {
-				event.Kind = EventDataPartial
+				kind = EventDataPartial
 				ch.opt.cbProcessMessages(&props, messages, mustAck, ch)
 				messages = make([]DeliveryData, 0, ch.opt.implParams.PrefetchCount)
 			}
-			raiseEvent(ch.opt.notifier, event)
+
+			Event{
+				SourceType: CliChannel,
+				SourceName: ch.opt.name,
+				Kind:       kind,
+			}.raise(ch.opt.notifier)
 		}
 	}
 }

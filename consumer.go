@@ -14,13 +14,12 @@ import (
 //
 // It does not return any value.
 func defaultPayloadProcessor(props *DeliveriesProperties, messages []DeliveryData, mustAck bool, ch *Channel) {
-	event := Event{
-		SourceType: CliConsumer,
+	Event{
+		SourceType: CliChannel,
 		SourceName: props.ConsumerTag,
 		Kind:       EventMessageReceived,
 		Err:        SomeErrFromString("default processor discards messages"),
-	}
-	raiseEvent(ch.opt.notifier, event)
+	}.raise(ch.opt.notifier)
 
 	if mustAck && len(messages) != 0 {
 		ch.Ack(messages[len(messages)-1].DeliveryTag, true)
