@@ -67,35 +67,36 @@ func NewChannel(conn *Connection, optionFuncs ...func(*ChannelOptions)) *Channel
 		if !ch.reconnectLoop(false) {
 			return
 		}
-		ch.manager()
+		ch.manage()
 	}()
 
 	return ch
 }
 
-// chanMarkPaused marks a channel as paused or unpaused.
+// pause marks the channel as paused or unpaused.
 //
-// It takes a pointer to a Channel and a boolean value as parameters.
-// The function raises an event to indicate whether the channel is blocked or unblocked,
+// It takes a boolean value as a parameter.
+// The method raises an event to indicate whether the channel is blocked or unblocked,
 // and updates the paused value of the Channel accordingly.
-func chanMarkPaused(ch *Channel, value bool) {
+func (ch *Channel) pause(value bool) {
 	ch.paused.mu.Lock()
 	defer ch.paused.mu.Unlock()
 
-	event := Event{
-		SourceType: CliConnection,
-		SourceName: ch.opt.name,
-		Kind:       EventUnBlocked,
-	}
+	kind := EventUnBlocked
 	if value {
-		event.Kind = EventBlocked
+		kind = EventBlocked
 	}
-	raiseEvent(ch.opt.notifier, event)
+
+	Event{
+		SourceType: CliChannel,
+		SourceName: ch.opt.name,
+		Kind:       kind,
+	}.raise(ch.opt.notifier)
 
 	ch.paused.value = value
 }
 
-// manager manages the channels.
+// manage keep the channel alive.
 //
 // It isolates all notifiers from the 'ch' object and handles various
 // cases using a select statement. It listens to the context done channel
@@ -107,16 +108,16 @@ func chanMarkPaused(ch *Channel, value bool) {
 //   - ch: a pointer to the Channel object.
 //
 // Return type: None.
-func (ch *Channel) manager() {
+func (ch *Channel) manage() {
 	var notifiers PersistentNotifiers
-	recovered := true
+	recovering := true
 
 	for {
-		if recovered {
-			recovered = false
-			notifiers = chanNotifiersRefresh(ch)
+		if recovering {
+			recovering = false
+			notifiers = ch.notifiers()
 			if ch.opt.implParams.IsConsumer {
-				go consumerRun(ch, notifiers.Consumer)
+				go ch.gobble(notifiers.Consumer)
 			}
 		}
 
@@ -125,7 +126,7 @@ func (ch *Channel) manager() {
 			ch.Close() // cancelCtx() called again but idempotent
 			return
 		case status := <-notifiers.Flow:
-			chanMarkPaused(ch, status)
+			ch.pause(status)
 		case confirm, notifierStatus := <-notifiers.Published:
 			if notifierStatus {
 				ch.opt.cbNotifyPublish(confirm, ch)
@@ -135,20 +136,20 @@ func (ch *Channel) manager() {
 				ch.opt.cbNotifyReturn(msg, ch)
 			}
 		case err, notifierStatus := <-notifiers.Closed:
-			if !chanRecover(ch, SomeErrFromError(err, err != nil), notifierStatus) {
+			if !ch.recover(SomeErrFromError(err, err != nil), notifierStatus) {
 				return
 			}
-			recovered = true
+			recovering = true
 		case reason, notifierStatus := <-notifiers.Cancel:
-			if !chanRecover(ch, SomeErrFromString(reason), notifierStatus) {
+			if !ch.recover(SomeErrFromString(reason), notifierStatus) {
 				return
 			}
-			recovered = true
+			recovering = true
 		}
 	}
 }
 
-// chanRecover recovers from a channel error and handles the necessary events and callbacks.
+// recover recovers from a channel error and handles the necessary events and callbacks.
 //
 // Parameters:
 //   - ch: a pointer to the Channel object.
@@ -157,13 +158,13 @@ func (ch *Channel) manager() {
 //
 // Returns:
 //   - a boolean value indicating whether the recovery was successful.
-func chanRecover(ch *Channel, err OptionalError, notifierStatus bool) bool {
-	raiseEvent(ch.opt.notifier, Event{
+func (ch *Channel) recover(err OptionalError, notifierStatus bool) bool {
+	Event{
 		SourceType: CliChannel,
 		SourceName: ch.opt.name,
 		Kind:       EventDown,
 		Err:        err,
-	})
+	}.raise(ch.opt.notifier)
 	// abort by callback
 	if !callbackAllowedDown(ch.opt.cbDown, ch.opt.name, err) {
 		return false
@@ -172,40 +173,42 @@ func chanRecover(ch *Channel, err OptionalError, notifierStatus bool) bool {
 	if !notifierStatus {
 		ch.baseChan.reset()
 
-		raiseEvent(ch.opt.notifier, Event{
+		Event{
 			SourceType: CliChannel,
 			SourceName: ch.opt.name,
 			Kind:       EventClosed,
-		})
+		}.raise(ch.opt.notifier)
 	}
 
 	// no err means gracefully closed on demand
 	return err.IsSet() && ch.reconnectLoop(true)
 }
 
-// chanGetNew tries to establish a connection to the channel and returns a boolean indicating success.
-// It sends a channel event to the notifier with either EventUp or EventCannotEstablish, depending
+// rebase tries to establish a new base channel and returns a boolean indicating success or failure.
+// It sends en event notification with either EventUp or EventCannotEstablish, depending
 // on the new channel status.
 //
 // It takes a pointer to a Channel struct as a parameter.
 // It returns a boolean value.
-func chanGetNew(ch *Channel) bool {
-	event := Event{
-		SourceType: CliChannel,
-		SourceName: ch.opt.name,
-		Kind:       EventUp,
-	}
+func (ch *Channel) rebase() bool {
+	kind := EventUp
 	result := true
+	optError := OptionalError{}
 
 	if super, err := ch.conn.Channel(); err != nil {
-		event.Kind = EventCannotEstablish
-		event.Err = SomeErrFromError(err, err != nil)
+		kind = EventCannotEstablish
+		optError = SomeErrFromError(err, true)
 		result = false
 	} else {
 		ch.baseChan.set(super)
 	}
 
-	raiseEvent(ch.opt.notifier, event)
+	Event{
+		SourceType: CliChannel,
+		SourceName: ch.opt.name,
+		Kind:       kind,
+		Err:        optError,
+	}.raise(ch.opt.notifier)
 	callbackDoUp(result, ch.opt.cbUp, ch.opt.name)
 
 	return result
@@ -226,9 +229,9 @@ func (ch *Channel) reconnectLoop(recovering bool) bool {
 			return false
 		}
 
-		if chanGetNew(ch) {
+		if ch.rebase() {
 			// cannot decide (yet) which infra is critical, let the caller decide via the raised events
-			chanMakeTopology(ch, recovering)
+			ch.makeTopology(recovering)
 			return true
 		}
 		// context cancelled
@@ -238,7 +241,7 @@ func (ch *Channel) reconnectLoop(recovering bool) bool {
 	}
 }
 
-// chanMakeTopology creates topology for a channel.
+// makeTopology creates topology for a channel.
 //
 // The function takes a channel (ch) and a boolean flag (recovering) as parameters.
 //
@@ -249,18 +252,17 @@ func (ch *Channel) reconnectLoop(recovering bool) bool {
 //   - if the topology element is marked as a destination, it saves a copy of the name for back reference.
 //
 // Finally, it raises an event for each topology element.
-func chanMakeTopology(ch *Channel, recovering bool) {
+func (ch *Channel) makeTopology(recovering bool) {
 	// Channels are not concurrent data/usage wise!
 	// prefer using a local isolated channel.
 	chLocal, err := ch.conn.Channel()
 	if err != nil {
-		event := Event{
+		Event{
 			SourceType: CliChannel,
 			SourceName: "topology.auto",
 			Kind:       EventCannotEstablish,
-			Err:        SomeErrFromError(err, err != nil),
-		}
-		raiseEvent(ch.opt.notifier, event)
+			Err:        SomeErrFromError(err, true),
+		}.raise(ch.opt.notifier)
 		return
 	}
 	defer chLocal.Close()
@@ -270,22 +272,16 @@ func chanMakeTopology(ch *Channel, recovering bool) {
 			continue
 		}
 
-		event := Event{
-			SourceType: CliChannel,
-			SourceName: ch.opt.name,
-			TargetName: t.Name,
-			Kind:       EventDefineTopology,
-		}
-
 		var name string
+		var optError OptionalError
 
 		if t.IsExchange {
-			err = declareExchange(chLocal, t)
-			event.Err = SomeErrFromError(err, err != nil)
+			err := declareExchange(chLocal, t)
+			optError = SomeErrFromError(err, err != nil)
 			name = t.Name
 		} else {
 			queue, err := declareQueue(chLocal, t)
-			event.Err = SomeErrFromError(err, err != nil)
+			optError = SomeErrFromError(err, err != nil)
 			name = queue.Name
 		}
 		// save a copy for back reference
@@ -295,7 +291,13 @@ func chanMakeTopology(ch *Channel, recovering bool) {
 			ch.baseChan.mu.Unlock()
 		}
 
-		raiseEvent(ch.opt.notifier, event)
+		Event{
+			SourceType: CliChannel,
+			SourceName: ch.opt.name,
+			TargetName: t.Name,
+			Kind:       EventDefineTopology,
+			Err:        optError,
+		}.raise(ch.opt.notifier)
 	}
 }
 

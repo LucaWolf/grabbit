@@ -43,15 +43,14 @@ type Publisher struct {
 // (see [WithChannelOptionNotification]) with a literal error containing the delivery tag.
 func defaultNotifyPublish(confirm amqp.Confirmation, ch *Channel) {
 	if !confirm.Ack {
-		event := Event{
-			SourceType: CliPublisher,
+		Event{
+			SourceType: CliChannel,
 			SourceName: ch.opt.name,
 			Kind:       EventMessagePublished,
 			Err: SomeErrFromString(
 				fmt.Sprintf("delivery tag %d unconfirmed", confirm.DeliveryTag),
 			),
-		}
-		raiseEvent(ch.opt.notifier, event)
+		}.raise(ch.opt.notifier)
 	}
 }
 
@@ -60,15 +59,14 @@ func defaultNotifyPublish(confirm amqp.Confirmation, ch *Channel) {
 // It sends an [EventMessageReturned] kind of event over the notification channel
 // (see [WithChannelOptionNotification]) with a literal error containing the return message ID.
 func defaultNotifyReturn(msg amqp.Return, ch *Channel) {
-	event := Event{
-		SourceType: CliPublisher,
+	Event{
+		SourceType: CliChannel,
 		SourceName: ch.opt.name,
 		Kind:       EventMessageReturned,
 		Err: SomeErrFromString(
 			fmt.Sprintf("message %s returned", msg.MessageId),
 		),
-	}
-	raiseEvent(ch.opt.notifier, event)
+	}.raise(ch.opt.notifier)
 }
 
 // Channel returns the managed [Channel] which can be further used to extract [SafeBaseChan]

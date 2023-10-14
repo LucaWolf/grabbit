@@ -13,13 +13,13 @@ type PersistentNotifiers struct {
 	Consumer  <-chan amqp.Delivery   // message intake
 }
 
-// chanNotifiersRefresh refreshes the notifiers of a channel and returns the notifier channels.
+// notifiers refreshes the notifiers of a channel and returns the notifier channels.
 // For publisher channels, it sets up notifiers for various events such as channel closure, cancellation, flow control, publishing confirmation,
 // and returned messages. It also calls the Confirm method on baseChan.super to enable publisher confirms.
 // For consumer channels, it calls the consumerSetup function to perform setup actions, and then starts a goroutine to run the consumer.
 //
 // It takes a pointer to a Channel as a parameter and returns PersistentNotifiers.
-func chanNotifiersRefresh(ch *Channel) PersistentNotifiers {
+func (ch *Channel) notifiers() PersistentNotifiers {
 	ch.baseChan.mu.RLock()
 	defer ch.baseChan.mu.RUnlock()
 
@@ -36,18 +36,17 @@ func chanNotifiersRefresh(ch *Channel) PersistentNotifiers {
 			notifiers.Returned = ch.baseChan.super.NotifyReturn(make(chan amqp.Return))
 
 			if err := ch.baseChan.super.Confirm(ch.opt.implParams.ConfirmationNoWait); err != nil {
-				event := Event{
+				Event{
 					SourceType: CliChannel,
 					SourceName: ch.opt.name,
 					Kind:       EventConfirm,
-					Err:        SomeErrFromError(err, err != nil),
-				}
-				raiseEvent(ch.opt.notifier, event)
+					Err:        SomeErrFromError(err, true),
+				}.raise(ch.opt.notifier)
 			}
 		}
 		// consumer actions
 		if ch.opt.implParams.IsConsumer {
-			notifiers.Consumer = consumerSetup(ch)
+			notifiers.Consumer = ch.consumer()
 		}
 	}
 

@@ -62,7 +62,7 @@ func NewConnection(address string, config amqp.Config, optionFuncs ...func(*Conn
 		if !conn.reconnectLoop(config) {
 			return
 		}
-		conn.manager(config)
+		conn.manage(config)
 	}()
 
 	return conn
@@ -94,13 +94,12 @@ func (conn *Connection) setFlow(value amqp.Blocking) {
 		kind = EventUnBlocked
 	}
 
-	event := Event{
+	Event{
 		SourceType: CliConnection,
 		SourceName: conn.opt.name,
 		Kind:       kind,
 		Err:        SomeErrFromString(value.Reason),
-	}
-	raiseEvent(conn.opt.notifier, event)
+	}.raise(conn.opt.notifier)
 }
 
 // refreshCredentials refreshes the credentials of the Connection.
@@ -143,11 +142,11 @@ func (conn *Connection) notificationChannels() (chan *amqp.Error, chan amqp.Bloc
 	return nil, nil, errors.New("connection not yet available")
 }
 
-// manager is a function that manages the connection state.
+// manage is a function that manages the connection state.
 //
 // It takes a config parameter of type amqp.Config.
 // This function does not return anything.
-func (conn *Connection) manager(config amqp.Config) {
+func (conn *Connection) manage(config amqp.Config) {
 	for {
 		evtClosed, evtBlocked, err := conn.notificationChannels()
 		if err != nil {
@@ -185,12 +184,13 @@ func (conn *Connection) manager(config amqp.Config) {
 // Returns:
 //   - a boolean indicating if the recovery was successful.
 func (conn *Connection) recover(config amqp.Config, err OptionalError, notifierStatus bool) bool {
-	raiseEvent(conn.opt.notifier, Event{
+	Event{
 		SourceType: CliConnection,
 		SourceName: conn.opt.name,
 		Kind:       EventDown,
 		Err:        err,
-	})
+	}.raise(conn.opt.notifier)
+
 	if !callbackAllowedDown(conn.opt.cbDown, conn.opt.name, err) {
 		return false
 	}
@@ -198,41 +198,44 @@ func (conn *Connection) recover(config amqp.Config, err OptionalError, notifierS
 	if !notifierStatus {
 		conn.baseConn.reset()
 
-		raiseEvent(conn.opt.notifier, Event{
+		Event{
 			SourceType: CliConnection,
 			SourceName: conn.opt.name,
 			Kind:       EventClosed,
-		})
+		}.raise(conn.opt.notifier)
 	}
+	// no err means gracefully closed on demand
 	return err.IsSet() && conn.reconnectLoop(config)
 }
 
-// dial connects to the AMQP server using the given configuration.
+// rebase establishes a new base connection to the AMQP server using the given configuration.
 //
 // The function takes a `config` parameter of type `amqp.Config` which
 // specifies the configuration options for the connection.
 //
 // It returns a boolean value indicating whether the connection was
 // successfully established.
-func (conn *Connection) dial(config amqp.Config) bool {
-	event := Event{
-		SourceType: CliConnection,
-		SourceName: conn.opt.name,
-		Kind:       EventUp,
-	}
+func (conn *Connection) rebase(config amqp.Config) bool {
 	result := true
+	kind := EventUp
+	optError := OptionalError{}
 
 	conn.refreshCredentials()
 
 	if super, err := amqp.DialConfig(conn.address, config); err != nil {
-		event.Err = SomeErrFromError(err, err != nil)
-		event.Kind = EventCannotEstablish
+		optError = SomeErrFromError(err, true)
+		kind = EventCannotEstablish
 		result = false
 	} else {
 		conn.baseConn.set(super)
 	}
 
-	raiseEvent(conn.opt.notifier, event)
+	Event{
+		SourceType: CliConnection,
+		SourceName: conn.opt.name,
+		Kind:       kind,
+		Err:        optError,
+	}.raise(conn.opt.notifier)
 	callbackDoUp(result, conn.opt.cbUp, conn.opt.name)
 
 	return result
@@ -251,7 +254,7 @@ func (conn *Connection) reconnectLoop(config amqp.Config) bool {
 			return false
 		}
 
-		if conn.dial(config) {
+		if conn.rebase(config) {
 			return true
 		}
 		if !delayerCompleted(conn.opt.ctx, conn.opt.delayer, retry) {
