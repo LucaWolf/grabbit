@@ -173,6 +173,7 @@ func procStatusEvents(
 			if !ok { // 2nd level of coroutine protection
 				return
 			}
+			// log.Printf("event channel %s: %s", event.SourceName, event.Kind)
 			switch event.Kind {
 			case EventUp:
 				if eventCounters.Up != nil {

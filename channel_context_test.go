@@ -22,6 +22,7 @@ func TestContextCancellation(t *testing.T) {
 	ctxAlpha, ctxAlphaCancel := context.WithCancel(context.Background())
 	// child context
 	ctxBeta, _ := context.WithCancel(ctxAlpha)
+	defer ctxAlphaCancel()
 
 	// create two independent channels; expect their inner contexts to become decoupled
 	alphaCh := NewChannel(conn,
