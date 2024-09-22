@@ -21,6 +21,7 @@ func (conn *Connection) IsClosed() bool {
 }
 
 // Close safely wraps the amqp connection Close and terminates the maintenance loop.
+// The inner base connection is reset and the context is cancelled.
 func (conn *Connection) Close() error {
 	conn.baseConn.mu.Lock()
 	defer conn.baseConn.mu.Unlock()
@@ -29,8 +30,8 @@ func (conn *Connection) Close() error {
 
 	if conn.baseConn.super != nil {
 		err = conn.baseConn.super.Close()
+		conn.baseConn.super = nil
 	}
-	conn.baseConn.super = nil
 	conn.opt.cancelCtx()
 
 	return err

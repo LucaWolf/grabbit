@@ -22,7 +22,8 @@ func (ch *Channel) IsClosed() bool {
 	return ch.baseChan.super == nil || ch.baseChan.super.IsClosed()
 }
 
-// Close wraps the base channel Close.
+// Close safely wraps the amqp channel Close and terminates the maintenance loop.
+// The inner base channel is reset and the context is cancelled.
 func (ch *Channel) Close() error {
 	ch.baseChan.mu.Lock()
 	defer ch.baseChan.mu.Unlock()
@@ -33,6 +34,7 @@ func (ch *Channel) Close() error {
 		// TODO It's advisable to wait for all Confirmations to arrive before
 		// calling Channel.Close() or Connection.Close().
 		err = ch.baseChan.super.Close()
+		ch.baseChan.super = nil
 	}
 	ch.opt.cancelCtx()
 
