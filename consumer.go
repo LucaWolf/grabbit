@@ -1,6 +1,7 @@
 package grabbit
 
 import (
+	"context"
 	"time"
 )
 
@@ -77,20 +78,17 @@ func (c *Consumer) AwaitAvailable(timeout, pollFreq time.Duration) bool {
 		pollFreq = 330 * time.Millisecond
 	}
 
+	d := time.Now().Add(timeout)
+	ctxLocal, cancel := context.WithDeadline(c.channel.opt.ctx, d)
+	defer cancel()
+
 	// status polling
 	ticker := time.NewTicker(pollFreq)
 	defer ticker.Stop()
-	done := make(chan bool)
-
-	// session timeout
-	go func() {
-		time.Sleep(timeout)
-		done <- true
-	}()
 
 	for {
 		select {
-		case <-done:
+		case <-ctxLocal.Done():
 			return false
 		case <-ticker.C:
 			if connUp, chanUp := c.Available(); connUp && chanUp {

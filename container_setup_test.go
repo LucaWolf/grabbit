@@ -79,7 +79,7 @@ func ConditionWait(ctx context.Context, cond func() bool, timeout, pollFreq time
 		timeout = 7500 * time.Millisecond
 	}
 	if pollFreq == 0 {
-		pollFreq = 300 * time.Millisecond
+		pollFreq = 330 * time.Millisecond
 	}
 
 	d := time.Now().Add(timeout)

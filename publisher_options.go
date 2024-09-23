@@ -41,69 +41,54 @@ func DefaultPublisherOptions() PublisherOptions {
 	}
 }
 
-// WithConfirmationNoWait sets the ConfirmationNoWait field of the PublisherOptions struct.
-//
-// It takes a boolean parameter `confNoWait` and updates the `ConfirmationNoWait` field of the `PublisherOptions` struct to the value of `confNoWait`.
-// It returns a pointer to the `PublisherOptions` struct.
+// WithConfirmationNoWait sets publisher's confirmation mode.
+// Returns the updated PublisherOptions.
 func (opt *PublisherOptions) WithConfirmationNoWait(confNoWait bool) *PublisherOptions {
 	opt.ConfirmationNoWait = confNoWait
 	return opt
 }
 
-// WithContext sets the context for the PublisherOptions.
+// WithContext sets the publisher's context.
 //
-// ctx: The context to be set.
-// Returns: A pointer to PublisherOptions.
+// This context is specific to publishing operations and may be different than the supporting channel's context.
+// We still recommended using the same value for both though unless you want strict control of e.g.
+// [Publish, PublishWithOptions, PublishDeferredConfirm, PublishDeferredConfirmWithOptions, AwaitDeferredConfirmation].
+// Returns the updated PublisherOptions.
 func (opt *PublisherOptions) WithContext(ctx context.Context) *PublisherOptions {
 	opt.Context = ctx
 	return opt
 }
 
-// WithExchange sets the exchange for the PublisherOptions struct.
-//
-// Parameters:
-// - exchange: The exchange to set.
-//
-// Returns:
-// - *PublisherOptions: The updated PublisherOptions struct.
+// WithExchange sets the publisher's routing exchange.
+// Returns the updated PublisherOptions.
 func (opt *PublisherOptions) WithExchange(exchange string) *PublisherOptions {
 	opt.Exchange = exchange
 	return opt
 }
 
-// WithKey sets the key for the PublisherOptions.
-//
-// key: the key to set.
-// returns: a pointer to the PublisherOptions.
+// WithKey sets the publisher's routing key.
+// Returns the updated PublisherOptions.
 func (opt *PublisherOptions) WithKey(key string) *PublisherOptions {
 	opt.Key = key
 	return opt
 }
 
-// WithMandatory sets the mandatory flag in the PublisherOptions struct.
-//
-// Parameters:
-// - mandatory: a boolean indicating whether the field should be mandatory.
-//
-// Returns:
-// - *PublisherOptions: a pointer to the PublisherOptions struct.
+// WithMandatory sets the deliveries being mandatory flag.
+// Returns the updated PublisherOptions.
 func (opt *PublisherOptions) WithMandatory(mandatory bool) *PublisherOptions {
 	opt.Mandatory = mandatory
 	return opt
 }
 
-// WithImmediate sets the immediate flag of the PublisherOptions struct.
-//
-// It takes a boolean parameter `immediate` and returns a pointer to the updated PublisherOptions.
+// WithImmediate sets the deliveries being immediate flag.
+// Returns the updated PublisherOptions.
 func (opt *PublisherOptions) WithImmediate(immediate bool) *PublisherOptions {
 	opt.Immediate = immediate
 	return opt
 }
 
-// WithConfirmationsCount sets the number of confirmations required for publishing.
-//
-// count: The number of confirmations required.
-// *PublisherOptions: The updated PublisherOptions object.
+// WithConfirmationsCount sets the number of confirmations required (capacity of amqp.Confirmation).
+// Returns the updated PublisherOptions.
 func (opt *PublisherOptions) WithConfirmationsCount(count int) *PublisherOptions {
 	opt.ConfirmationCount = count
 	return opt

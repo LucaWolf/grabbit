@@ -26,6 +26,7 @@ func expectSingleQueue(cli *rabbithole.Client, name string) error {
 	return nil
 }
 
+// TestChannelTopology tests that topologies are re-created after the current channel is recovered
 func TestChannelTopology(t *testing.T) {
 	qName := "test_queue"
 	qDurable := false // we want to test if recreated after recovery
@@ -72,19 +73,12 @@ func TestChannelTopology(t *testing.T) {
 		t.Error("channel went down/closed unexpectedly")
 	}
 
-	// --- now we know the engine is up and ready ---
-	rhClient, err := rabbithole.NewClient("http://127.0.0.1:15672", "guest", "guest")
-	if err != nil {
-		t.Fatal("rabbithole controller unavailable")
-	}
-	// --- calling ^ first thing in the test could have failed ---
-
 	// Power grab: directly via the inner base and super channels.
 	// WANNING: murky waters, make sure you protect the inner workings
 	baseCh := testCh.Channel()
 	amqpCh := baseCh.Super()
 	baseCh.Lock()
-	_, err = amqpCh.QueueDeclarePassive(qName, qDurable, false, false, false, nil)
+	_, err := amqpCh.QueueDeclarePassive(qName, qDurable, false, false, false, nil)
 	baseCh.UnLock()
 	if err != nil {
 		t.Error("failed to fetched queue for channel topology", err)
@@ -93,6 +87,11 @@ func TestChannelTopology(t *testing.T) {
 	// on error QueueDeclarePassive() throws and kills your channel
 
 	// List queues by alternative means
+	rhClient, err := rabbithole.NewClient("http://127.0.0.1:15672", "guest", "guest")
+	if err != nil {
+		t.Error("rabbithole controller unavailable")
+	}
+
 	if err := expectSingleQueue(rhClient, qName); err != nil {
 		t.Error("rabbithole failed to list queue", err)
 	}
@@ -109,7 +108,7 @@ func TestChannelTopology(t *testing.T) {
 
 	// test the grabbit connection and queue have recovered after a while
 	if !ConditionWait(ctx, chCounters.Down.NotZero, 30*time.Second, 0) {
-		t.Fatal("timeout waiting for channel to go down: ")
+		t.Error("timeout waiting for channel to go down: ")
 	}
 	// Note: EventClosed is only expected when we cleanly close the channel.
 	// We would have got one for the connection though... but have not used a procStatusEvents for that.

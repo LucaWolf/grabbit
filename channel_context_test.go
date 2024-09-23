@@ -8,6 +8,10 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+// TestContextCancellation tests that context are handler properly.
+//
+// 1. sibling contexts are independent. Closing one channel (which cancels own ctx) should not affect the other.
+// 2. the context cancellation is propagated from parent to child
 func TestContextCancellation(t *testing.T) {
 	conn := NewConnection(
 		CONN_ADDR_RMQ_LOCAL,
