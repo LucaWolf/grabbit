@@ -14,8 +14,7 @@ import (
 // 2. the context cancellation is propagated from parent to child
 func TestContextCancellation(t *testing.T) {
 	conn := NewConnection(
-		CONN_ADDR_RMQ_LOCAL,
-		amqp.Config{},
+		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
 		WithConnectionOptionName("test.ctx"),
 	)
 	defer conn.Close() // 'goleak' would complain w/out final clean-up

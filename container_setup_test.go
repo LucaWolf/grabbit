@@ -3,6 +3,7 @@ package grabbit
 import (
 	"context"
 	"log"
+	"math/rand"
 	"os/exec"
 	"strings"
 	"sync"
@@ -102,6 +103,55 @@ func ConditionWait(ctx context.Context, cond func() bool, timeout, pollFreq time
 	}
 }
 
+type SafeRand struct {
+	mu sync.RWMutex
+	r  *rand.Rand
+}
+
+func NewSafeRand(seed int64) *SafeRand {
+	return &SafeRand{
+		r: rand.New(rand.NewSource(seed)),
+	}
+}
+
+func (r *SafeRand) Int() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.r.Int()
+}
+
+// SafeRegisterMap keeps a record of tags that have been registered with no
+// interest in the associated payload.
+type SafeRegisterMap struct {
+	mu     sync.RWMutex
+	values map[string]struct{}
+}
+
+func NewSafeRegisterMap() *SafeRegisterMap {
+	return &SafeRegisterMap{
+		values: make(map[string]struct{}),
+	}
+}
+
+func (m *SafeRegisterMap) Set(tag string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.values[tag] = struct{}{}
+}
+
+func (m *SafeRegisterMap) Has(tag string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	_, has := m.values[tag]
+	return has
+}
+
+func (m *SafeRegisterMap) Length() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.values)
+}
+
 // SafeCounter implements a poor man's semaphore
 type SafeCounter struct {
 	counter       int
@@ -148,10 +198,12 @@ func (c *SafeCounter) IsDefault() bool {
 }
 
 type EventCounters struct {
-	Up       *SafeCounter // up = connected
-	Down     *SafeCounter // down = disconnected
-	Closed   *SafeCounter // closed
-	Recovery *SafeCounter // performing initial or recovery reconnection
+	Up            *SafeCounter // up = connected
+	Down          *SafeCounter // down = disconnected
+	Closed        *SafeCounter // closed
+	Recovery      *SafeCounter // performing initial or recovery reconnection
+	DataExhausted *SafeCounter // consumer has no more data
+	MsgPublished  *SafeCounter // messages published
 }
 
 // procStatusEvents is a coroutine that processes the connection status events.
@@ -173,7 +225,10 @@ func procStatusEvents(
 			if !ok { // 2nd level of coroutine protection
 				return
 			}
-			// log.Printf("event channel %s: %s", event.SourceName, event.Kind)
+			// these tend to get noisy in our testing
+			// if event.Kind != EventMessagePublished {
+			// 	log.Printf("event channel %s: %s", event.SourceName, event.Kind)
+			// }
 			switch event.Kind {
 			case EventUp:
 				if eventCounters.Up != nil {
@@ -193,6 +248,14 @@ func procStatusEvents(
 				}
 				if cbRecoveryCounter != nil {
 					cbRecoveryCounter.Add(-1)
+				}
+			case EventDataExhausted:
+				if eventCounters.DataExhausted != nil {
+					eventCounters.DataExhausted.Add(1)
+				}
+			case EventMessagePublished:
+				if eventCounters.MsgPublished != nil {
+					eventCounters.MsgPublished.Add(1)
 				}
 			default:
 			}

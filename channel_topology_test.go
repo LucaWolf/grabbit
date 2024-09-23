@@ -32,8 +32,7 @@ func TestChannelTopology(t *testing.T) {
 	qDurable := false // we want to test if recreated after recovery
 
 	conn := NewConnection(
-		CONN_ADDR_RMQ_LOCAL,
-		amqp.Config{},
+		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
 		WithConnectionOptionName("test.ctx"),
 	)
 	defer conn.Close()
@@ -108,7 +107,7 @@ func TestChannelTopology(t *testing.T) {
 
 	// test the grabbit connection and queue have recovered after a while
 	if !ConditionWait(ctx, chCounters.Down.NotZero, 30*time.Second, 0) {
-		t.Error("timeout waiting for channel to go down: ")
+		t.Error("timeout waiting for channel to go down")
 	}
 	// Note: EventClosed is only expected when we cleanly close the channel.
 	// We would have got one for the connection though... but have not used a procStatusEvents for that.

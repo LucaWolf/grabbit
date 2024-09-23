@@ -24,7 +24,7 @@ func PublishMsgBulk(pub *Publisher, opt PublisherOptions, records int, tag strin
 
 	for i := 0; i < records; i++ {
 		buff.Reset()
-		buff.WriteString(fmt.Sprintf("%s-bulk test number %04d", tag, i))
+		buff.WriteString(fmt.Sprintf("data-%s-%04d", tag, i))
 		message.Body = buff.Bytes()
 
 		if conf, err := pub.PublishDeferredConfirmWithOptions(opt, message); err != nil {
@@ -89,7 +89,7 @@ func TestPublisherRouting(t *testing.T) {
 	defer ctxCancel() // 'goleak' would complain w/out final clean-up
 
 	conn := NewConnection(
-		"amqp://guest:guest@localhost", amqp.Config{},
+		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
 		WithConnectionOptionContext(ctxMaster),
 		WithConnectionOptionName("conn.main"),
 	)

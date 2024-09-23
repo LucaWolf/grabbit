@@ -45,8 +45,7 @@ func TestNewConnection(t *testing.T) {
 	go procStatusEvents(ctx, connStatusChan, eventCounters, &recoveringCallbackCounter)
 
 	conn := NewConnection(
-		CONN_ADDR_RMQ_LOCAL,
-		amqp.Config{},
+		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
 		WithConnectionOptionName("test.conn"),
 		WithConnectionOptionDown(connDownCB),
 		WithConnectionOptionUp(connUpCB),
@@ -148,8 +147,7 @@ func TestConnectionCloseContext(t *testing.T) {
 	recoveringCallbackCounter.Reset()
 
 	conn := NewConnection(
-		CONN_ADDR_RMQ_LOCAL,
-		amqp.Config{},
+		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
 		WithConnectionOptionName("grabbit-test"),
 		WithConnectionOptionDown(connDownCB),
 		WithConnectionOptionUp(connUpCB),

@@ -32,10 +32,10 @@ const (
 	EventBlocked
 	EventUnBlocked
 	EventClosed
-	EventMessageReceived
-	EventMessagePublished
-	EventMessageReturned
-	EventConfirm
+	EventMessageReceived  // only when defaultPayloadProcessor
+	EventMessagePublished // only when defaultNotifyPublish
+	EventMessageReturned  // only when defaultNotifyReturn
+	EventConfirm          // when publisher cannot be put in confirm mode
 	EventQos
 	EventConsume
 	EventDefineTopology

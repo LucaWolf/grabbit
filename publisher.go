@@ -43,16 +43,15 @@ type Publisher struct {
 // it sends an [EventMessagePublished] kind of event over the notification channel
 // (see [WithChannelOptionNotification]) with a literal error containing the delivery tag.
 func defaultNotifyPublish(confirm amqp.Confirmation, ch *Channel) {
-	if !confirm.Ack {
-		Event{
-			SourceType: CliChannel,
-			SourceName: ch.opt.name,
-			Kind:       EventMessagePublished,
-			Err: SomeErrFromString(
-				fmt.Sprintf("delivery tag %d unconfirmed", confirm.DeliveryTag),
-			),
-		}.raise(ch.opt.notifier)
-	}
+	// FIXME this may get too noisy! Perhaps restrict via some on/off flag?
+	Event{
+		SourceType: CliChannel,
+		SourceName: ch.opt.name,
+		Kind:       EventMessagePublished,
+		Err: SomeErrFromString(
+			fmt.Sprintf("delivery tag %d confirmation %v", confirm.DeliveryTag, confirm.Ack),
+		),
+	}.raise(ch.opt.notifier)
 }
 
 // defaultNotifyReturn provides a base implementation of [CallbackNotifyReturn] which can be
