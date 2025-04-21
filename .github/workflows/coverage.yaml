@@ -1,4 +1,4 @@
-name: Test aand coverage
+name: Test and coverage
 on:
   push:
     branches: [ master ]
