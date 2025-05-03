@@ -59,10 +59,6 @@ func TestNewConnection(t *testing.T) {
 	}
 	<-time.After(3 * time.Second)
 
-	// TODO send to the RMQ engine a client disconnect command
-	// this should trigger a recovery, hence the callbacks will have its kind
-	// expect down & up again
-
 	conn.Close()
 	if !ConditionWait(ctx, eventCounters.Down.NotZero, 5*time.Second, time.Second) {
 		t.Error("timeout waiting for connection to be down")
@@ -88,7 +84,7 @@ func TestNewConnection(t *testing.T) {
 
 func ReattemptingDenied(name string, retry int) bool {
 	recoveringCallbackCounter.Add(1)
-	return false // break out
+	return retry <= 3 // want struggling for a while
 }
 
 func TestConnectionDenyRecovery(t *testing.T) {
@@ -99,24 +95,35 @@ func TestConnectionDenyRecovery(t *testing.T) {
 	upCallbackCounter.Reset()
 	recoveringCallbackCounter.Reset()
 
+	delayer := &DefaultDelayer{
+		Value: 100 * time.Millisecond,
+	}
+
 	conn := NewConnection(
-		"amqp://guest:quest@localhost:5672/", // bad pwd to make it fail forever
+		"amqp://guest:bad_pwd@localhost:5672/",
 		amqp.Config{},
 		WithConnectionOptionName("grabbit-test"),
 		WithConnectionOptionDown(connDownCB),
 		WithConnectionOptionUp(connUpCB),
 		WithConnectionOptionRecovering(ReattemptingDenied),
+		WithConnectionOptionDelay(delayer),
 		WithConnectionOptionContext(ctx),
 	)
-	// give it a bit to actually call the callbacks
-	<-time.After(5 * time.Second)
+	if !ConditionWait(
+		ctx,
+		func() bool { return recoveringCallbackCounter.Value() > 3 },
+		30*time.Second, 200*time.Millisecond,
+	) {
+		t.Fatal("timeout waiting for final recovery attempt")
+	}
 
 	if !conn.IsClosed() {
 		t.Error("connection should be initially closed")
 	}
-	if recoveringCallbackCounter.Value() == 0 {
-		t.Errorf("recoveringCallback expected some")
-	}
+	// if recoveringCallbackCounter.Value() == 0 {
+	// 	t.Errorf("recoveringCallback expected some")
+	// }
+
 	// it never went up
 	if upCallbackCounter.Value() != 0 {
 		t.Errorf("upCallback expected %v, got %v", 0, upCallbackCounter.Value())
@@ -136,6 +143,56 @@ func TestConnectionDenyRecovery(t *testing.T) {
 	// can close several times w/out any repercussions
 	conn.Close()
 	conn.Close()
+	conn.Close()
+}
+
+func ReattemptingCancelsContext(cancel context.CancelFunc) CallbackWhenRecovering {
+	return func(name string, retry int) bool {
+		cancel()
+		recoveringCallbackCounter.Add(1)
+		return true
+	}
+}
+
+func TestConnectionDelayerCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx_conditions := context.Background() // since we're force canceling ctx
+
+	downCallbackCounter.Reset()
+	upCallbackCounter.Reset()
+	recoveringCallbackCounter.Reset()
+
+	conn := NewConnection(
+		"amqp://guest:bad_pwd@localhost:5672/",
+		amqp.Config{},
+		WithConnectionOptionName("grabbit-test"),
+		WithConnectionOptionDown(connDownCB),
+		WithConnectionOptionUp(connUpCB),
+		WithConnectionOptionRecovering(ReattemptingCancelsContext(cancel)),
+		WithConnectionOptionContext(ctx),
+	)
+	// await connection which should have raised a series of events
+	if !ConditionWait(ctx_conditions, recoveringCallbackCounter.NotZero, 30*time.Second, 200*time.Millisecond) {
+		t.Fatal("timeout waiting for connection to recover")
+	}
+
+	// it never transitioned up
+	if upCallbackCounter.Value() != 0 {
+		t.Errorf("downCaupCallbackCounterllback expected %v, got %v", 0, upCallbackCounter.Value())
+	}
+
+	if !ConditionWait(ctx_conditions, conn.IsClosed, 7*time.Second, 200*time.Millisecond) {
+		t.Fatal("timeout waiting for connection to be shut-down")
+	}
+	if !ConditionWait(
+		ctx_conditions,
+		func() bool { return !conn.Connection().IsSet() },
+		7*time.Second,
+		200*time.Millisecond) {
+		t.Fatal("timeout waiting for connection to reset")
+	}
+	// can close several times w/out any repercussions
 	conn.Close()
 }
 

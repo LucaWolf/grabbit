@@ -60,6 +60,10 @@ func NewConnection(address string, config amqp.Config, optionFuncs ...func(*Conn
 
 	go func() {
 		if !conn.reconnectLoop(config) {
+			// initial connection may fail after rmq established;
+			if conn.Connection().IsSet() {
+				conn.Close()
+			}
 			return
 		}
 		conn.manage(config)

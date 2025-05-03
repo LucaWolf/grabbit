@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"math/rand"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -41,18 +42,27 @@ func stopRabbitEngine(containerId string) error {
 }
 
 func TestMain(m *testing.M) {
-	containerId, err := startRabbitEngine()
-	if err != nil {
-		log.Fatalf("failed to start RMQ engine: %v", err)
+	skip_container := os.Getenv("TEST_SKIP_CONTAINER")
+	var containerId string
+	var err error
+
+	if len(skip_container) == 0 {
+		containerId, err = startRabbitEngine()
+		if err != nil {
+			log.Fatalf("failed to start RMQ engine: %v", err)
+		}
+		log.Printf("RMQ container started: %s", containerId)
 	}
-	log.Printf("RMQ container started: %s", containerId)
+
 	flag.Parse() // capture things like '-race', etc.
 	// FIXME perhaps adopt leak detection at individual test level
 	goleak.VerifyTestMain(m, goleak.Cleanup(func(exitCode int) {
-		if err := stopRabbitEngine(containerId); err != nil {
-			log.Fatalf("failed to stop RMQ engine: %v", err)
+		if len(skip_container) == 0 {
+			if err := stopRabbitEngine(containerId); err != nil {
+				log.Fatalf("failed to stop RMQ engine (%s): %v", containerId, err)
+			}
+			log.Printf("RMQ container stopped: %s", containerId)
 		}
-		log.Printf("RMQ container stopped: %s", containerId)
 	}))
 }
 
