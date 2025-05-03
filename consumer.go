@@ -98,7 +98,7 @@ func (c *Consumer) AwaitAvailable(timeout, pollFreq time.Duration) bool {
 	}
 }
 
-// Close shuts down cleanly the publisher channel.
+// Close shuts down cleanly the consumer channel.
 func (c *Consumer) Close() error {
 	return c.channel.Close()
 }

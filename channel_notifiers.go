@@ -20,8 +20,8 @@ type PersistentNotifiers struct {
 //
 // It takes a pointer to a Channel as a parameter and returns PersistentNotifiers.
 func (ch *Channel) notifiers() PersistentNotifiers {
-	ch.baseChan.mu.RLock()
-	defer ch.baseChan.mu.RUnlock()
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
 
 	notifiers := PersistentNotifiers{}
 
@@ -35,6 +35,8 @@ func (ch *Channel) notifiers() PersistentNotifiers {
 			notifiers.Published = ch.baseChan.super.NotifyPublish(make(chan amqp.Confirmation, ch.opt.implParams.ConfirmationCount))
 			notifiers.Returned = ch.baseChan.super.NotifyReturn(make(chan amqp.Return))
 
+			// TODO extract this outside the notifiers handler as subsequent step
+			// also make it optional as not all publishers want confirmation mode
 			if err := ch.baseChan.super.Confirm(ch.opt.implParams.ConfirmationNoWait); err != nil {
 				Event{
 					SourceType: CliChannel,
@@ -43,10 +45,6 @@ func (ch *Channel) notifiers() PersistentNotifiers {
 					Err:        SomeErrFromError(err, true),
 				}.raise(ch.opt.notifier)
 			}
-		}
-		// consumer actions
-		if ch.opt.implParams.IsConsumer {
-			notifiers.Consumer = ch.consumer()
 		}
 	}
 

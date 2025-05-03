@@ -20,7 +20,7 @@ type TopologyOptions struct {
 	IsDestination bool         // end target, i.e. if messages should be routed to it
 	IsExchange    bool         // indicates if this an exchange or queue
 	Bind          TopologyBind // complex routing
-	Kind          string       // empty string for default exchange or: direct, topic, fanout, headers.
+	Kind          string       // empty string for default (direct) exchange or: direct, topic, fanout, headers.
 	Durable       bool         // maps the durable amqp attribute
 	AutoDelete    bool         // maps the auto-delete amqp attribute
 	Exclusive     bool         // if queue is exclusive

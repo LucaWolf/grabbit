@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	trace "traceutils"
+
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -117,6 +119,7 @@ func (ch *Channel) manage() {
 			recovering = false
 			notifiers = ch.notifiers()
 			if ch.opt.implParams.IsConsumer {
+				notifiers.Consumer = ch.consumer()
 				go ch.gobble(notifiers.Consumer)
 			}
 		}
@@ -276,11 +279,11 @@ func (ch *Channel) makeTopology(recovering bool) {
 		var optError OptionalError
 
 		if t.IsExchange {
-			err := declareExchange(chLocal, t)
+			err := declareExchange(ch.opt.ctx, chLocal, t)
 			optError = SomeErrFromError(err, err != nil)
 			name = t.Name
 		} else {
-			queue, err := declareQueue(chLocal, t)
+			queue, err := declareQueue(ch.opt.ctx, chLocal, t)
 			optError = SomeErrFromError(err, err != nil)
 			name = queue.Name
 		}
@@ -304,12 +307,17 @@ func (ch *Channel) makeTopology(recovering bool) {
 // declareExchange is a function that declares an exchange in RabbitMQ.
 //
 // It takes in a *amqp.Channel and a *TopologyOptions as parameters.
-// It returns an error.
-func declareExchange(ch *amqp.Channel, t *TopologyOptions) error {
+// It returns an error if the exchange declaration fails or the any binding fails.
+func declareExchange(ctx context.Context, ch *amqp.Channel, t *TopologyOptions) error {
+	if t.Kind == "" { // default
+		t.Kind = "direct"
+	}
 	err := ch.ExchangeDeclare(t.Name, t.Kind, t.Durable, t.AutoDelete, t.Internal, t.NoWait, t.Args)
+	trace.ExchangeDeclare(ctx, t.Name, t.Kind, t.Durable, t.AutoDelete, t.Internal, t.NoWait, t.Args)
 	if err == nil && t.Bind.Enabled {
 		source, destination := t.GetRouting()
 		err = ch.ExchangeBind(destination, t.Bind.Key, source, t.Bind.NoWait, t.Bind.Args)
+		trace.ExchangeBind(ctx, destination, t.Bind.Key, source, t.Bind.NoWait, t.Bind.Args)
 	}
 
 	return err
@@ -323,15 +331,17 @@ func declareExchange(ch *amqp.Channel, t *TopologyOptions) error {
 //
 // Returns:
 //   - amqp.Queue: The declared queue.
-//   - error: An error object if there was an issue with the declaration or the additional operations.
-func declareQueue(ch *amqp.Channel, t *TopologyOptions) (amqp.Queue, error) {
+//   - error: set if issues with the declaration or any queue binding operations.
+func declareQueue(ctx context.Context, ch *amqp.Channel, t *TopologyOptions) (amqp.Queue, error) {
 	queue, err := ch.QueueDeclare(t.Name, t.Durable, t.AutoDelete, t.Exclusive, t.NoWait, t.Args)
+	trace.QueueDeclare(ctx, t.Name, t.Durable, t.AutoDelete, t.Exclusive, t.NoWait, t.Args)
 	if err == nil {
 		// sometimes the assigned name comes back empty. This is an indication of conn errors
 		if len(queue.Name) == 0 {
 			err = fmt.Errorf("cannot declare durable (%v) queue %s", t.Durable, t.Name)
 		} else if t.Bind.Enabled {
 			err = ch.QueueBind(queue.Name, t.Bind.Key, t.Bind.Peer, t.Bind.NoWait, t.Bind.Args)
+			trace.QueueBind(ctx, queue.Name, t.Bind.Key, t.Bind.Peer, t.Bind.NoWait, t.Bind.Args)
 		}
 	}
 

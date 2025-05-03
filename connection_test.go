@@ -8,24 +8,6 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-var downCallbackCounter SafeCounter
-var upCallbackCounter SafeCounter
-var recoveringCallbackCounter SafeCounter
-
-func connDownCB(name string, err OptionalError) bool {
-	downCallbackCounter.Add(1)
-	return true // want continuing
-}
-
-func connUpCB(name string) {
-	upCallbackCounter.Add(1)
-}
-
-func connReconnectCB(name string, retry int) bool {
-	recoveringCallbackCounter.Add(1)
-	return true // want continuing
-}
-
 func TestNewConnection(t *testing.T) {
 	connStatusChan := make(chan Event, 32)
 
@@ -100,7 +82,7 @@ func TestConnectionDenyRecovery(t *testing.T) {
 	}
 
 	conn := NewConnection(
-		"amqp://guest:bad_pwd@localhost:5672/",
+		CONN_ADDR_RMQ_REJECT_PWD,
 		amqp.Config{},
 		WithConnectionOptionName("grabbit-test"),
 		WithConnectionOptionDown(connDownCB),
@@ -164,7 +146,7 @@ func TestConnectionDelayerCancelled(t *testing.T) {
 	recoveringCallbackCounter.Reset()
 
 	conn := NewConnection(
-		"amqp://guest:bad_pwd@localhost:5672/",
+		CONN_ADDR_RMQ_REJECT_PWD,
 		amqp.Config{},
 		WithConnectionOptionName("grabbit-test"),
 		WithConnectionOptionDown(connDownCB),
@@ -260,4 +242,44 @@ func TestConnectionCloseContext(t *testing.T) {
 		t.Errorf("recoveringCallback expected some")
 	}
 
+}
+
+func TestConnectionCredentialProvider(t *testing.T) {
+	connStatusChan := make(chan Event, 32)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pwdCallbackCounter.Reset()
+
+	eventCounters := &EventCounters{
+		Up:       &SafeCounter{},
+		Down:     &SafeCounter{},
+		Closed:   &SafeCounter{},
+		Recovery: &SafeCounter{},
+	}
+	go procStatusEvents(ctx, connStatusChan, eventCounters, nil)
+
+	goodPwd := pwdProvider{
+		Value: "guest",
+	}
+
+	// inital PWD is bad but provider takes over during re-attemting
+	NewConnection(
+		CONN_ADDR_RMQ_REJECT_PWD,
+		amqp.Config{},
+		WithConnectionOptionName("grabbit-test"),
+		WithConnectionOptionPassword(goodPwd),
+		WithConnectionOptionNotification(connStatusChan),
+		WithConnectionOptionContext(ctx),
+	)
+	// await connection which should have raised a series of events
+	if !ConditionWait(ctx, eventCounters.Up.NotZero, 30*time.Second, time.Second) {
+		t.Fatal("timeout waiting for connection to be ready")
+	}
+
+	// test it was called indeed.
+	// could be several times since RMQ server could take a while to initialize
+	if pwdCallbackCounter.Value() == 0 {
+		t.Errorf("pwdCallback expected %v, got %v", 1, pwdCallbackCounter.Value())
+	}
 }

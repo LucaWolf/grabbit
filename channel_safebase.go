@@ -19,8 +19,8 @@ type SafeBaseChan struct {
 //
 // Returns true if the super field is not nil, false otherwise.
 func (c *SafeBaseChan) IsSet() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.RLock()
+	defer c.RUnlock()
 
 	return c.super != nil
 }
@@ -29,6 +29,9 @@ func (c *SafeBaseChan) IsSet() bool {
 // Use sparingly and prefer using the predefined [Channel] wrapping methods instead.
 // Pair usage with the locking/unlocking routines for safety!
 func (c *SafeBaseChan) Super() *amqp.Channel {
+	c.RLock()
+	defer c.RUnlock()
+
 	return c.super
 }
 
@@ -38,20 +41,20 @@ func (c *SafeBaseChan) Lock() {
 	c.mu.Lock()
 }
 
-// UnLock releases the low level channel [Super] lock.
-func (c *SafeBaseChan) UnLock() {
+// Unlock releases the low level channel [Super] lock.
+func (c *SafeBaseChan) Unlock() {
 	c.mu.Unlock()
 }
 
 // RLock acquires read locking of the low level channel [Super] for amqp operations.
 // Use sparingly and fast as this locks-out the channel recovery!
 func (c *SafeBaseChan) RLock() {
-	c.mu.Lock()
+	c.mu.RLock()
 }
 
 // RUnlock releases the low level channel [Super] read lock.
 func (c *SafeBaseChan) RUnlock() {
-	c.mu.Unlock()
+	c.mu.RUnlock()
 }
 
 // set is a private method for updating the super channel (post recovery)

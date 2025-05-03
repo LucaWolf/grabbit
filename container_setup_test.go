@@ -17,6 +17,7 @@ import (
 )
 
 const CONN_ADDR_RMQ_LOCAL = "amqp://guest:guest@localhost:5672/"
+const CONN_ADDR_RMQ_REJECT_PWD = "amqp://guest:bad_pwd@localhost:5672/"
 const CONTAINER_ENGINE = "podman" // used docker if that's your setup
 
 func startRabbitEngine() (string, error) {
@@ -214,6 +215,46 @@ type EventCounters struct {
 	Recovery      *SafeCounter // performing initial or recovery reconnection
 	DataExhausted *SafeCounter // consumer has no more data
 	MsgPublished  *SafeCounter // messages published
+	MsgReceived   *SafeCounter // messages received
+}
+
+var downCallbackCounter SafeCounter
+var upCallbackCounter SafeCounter
+var recoveringCallbackCounter SafeCounter
+var delayerCallbackCounter SafeCounter
+var pwdCallbackCounter SafeCounter
+
+func connDownCB(name string, err OptionalError) bool {
+	downCallbackCounter.Add(1)
+	return true // want continuing
+}
+
+func connUpCB(name string) {
+	upCallbackCounter.Add(1)
+}
+
+func connReconnectCB(name string, retry int) bool {
+	recoveringCallbackCounter.Add(1)
+	return true // want continuing
+}
+
+type tracingDelayer struct {
+	Value time.Duration
+}
+
+// Delay implements the DelayProvider i/face for the DefaultDelayer.
+func (delayer tracingDelayer) Delay(retry int) time.Duration {
+	delayerCallbackCounter.Add(1)
+	return delayer.Value
+}
+
+type pwdProvider struct {
+	Value string
+}
+
+func (p pwdProvider) Password() (string, error) {
+	pwdCallbackCounter.Add(1)
+	return p.Value, nil
 }
 
 // procStatusEvents is a coroutine that processes the connection status events.
@@ -267,7 +308,15 @@ func procStatusEvents(
 				if eventCounters.MsgPublished != nil {
 					eventCounters.MsgPublished.Add(1)
 				}
+			case EventMessageReceived:
+				if eventCounters.MsgReceived != nil {
+					eventCounters.MsgReceived.Add(1)
+				}
 			default:
+				if event.Err.IsSet() {
+					log.Printf("event channel %s: %s: %s: %s",
+						event.SourceName, event.TargetName, event.Kind, event.Err)
+				}
 			}
 		}
 	}

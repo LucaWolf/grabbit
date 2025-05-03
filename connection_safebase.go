@@ -9,13 +9,13 @@ import (
 // SafeBaseConn wraps in a concurrency safe way the low level amqp.Connection.
 type SafeBaseConn struct {
 	super *amqp.Connection // core connection
-	mu    sync.RWMutex     // makes this concurrent safe, maintenance wise only!
+	mu    sync.RWMutex     // makes this concurrent safe
 }
 
 // IsSet tests if the low level amqp connection is set.
 func (c *SafeBaseConn) IsSet() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.RLock()
+	defer c.RUnlock()
 
 	return c.super != nil
 }
@@ -24,6 +24,9 @@ func (c *SafeBaseConn) IsSet() bool {
 // Use sparingly and prefer using the predefined [Connection] wrapping methods instead.
 // Pair usage with the locking/unlocking routines for safety!
 func (c *SafeBaseConn) Super() *amqp.Connection {
+	c.RLock()
+	defer c.RUnlock()
+
 	return c.super
 }
 
@@ -36,6 +39,14 @@ func (c *SafeBaseConn) Lock() {
 // UnLock releases the low level connection [Super] lock.
 func (c *SafeBaseConn) UnLock() {
 	c.mu.Unlock()
+}
+
+func (c *SafeBaseConn) RLock() {
+	c.mu.RLock()
+}
+
+func (c *SafeBaseConn) RUnlock() {
+	c.mu.RUnlock()
 }
 
 // set is a private method for updating the super connection (post recovery)

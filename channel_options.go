@@ -5,7 +5,7 @@ import (
 )
 
 // ChanUsageParameters embeds [PublisherUsageOptions] and [ConsumerUsageOptions].
-// It is a private member of the ChannelOptions and cen be passed
+// It is a private member of the ChannelOptions and can be passed
 // via [WithChannelOptionUsageParams].
 type ChanUsageParameters struct {
 	PublisherUsageOptions

@@ -4,6 +4,11 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
+
+	trace "traceutils"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func TestDefaultPublisherOptions(t *testing.T) {
@@ -36,7 +41,7 @@ func TestDefaultPublisherOptions(t *testing.T) {
 	}
 }
 
-func TestPublisherOptions_Various(t *testing.T) {
+func TestPublisherOptionsSetters(t *testing.T) {
 	opt := DefaultPublisherOptions()
 
 	// ConfirmationNoWait
@@ -102,4 +107,205 @@ func TestPublisherOptions_Various(t *testing.T) {
 	if !reflect.DeepEqual(result, &opt) {
 		t.Errorf("DefaultPublisherOptions().result.pointer = %v, want %v", result, opt)
 	}
+}
+
+func TestPublisherOptions(t *testing.T) {
+	QueueName := "workload_publisher_options"
+	chCapacity := 32
+	MANDATORY := true
+	IMMEDIATE := true
+	CONFIRM_NOWAIT := false // true blocks the amqp Confirm operation :-/
+	IF_UNUSED := true
+	IF_EMPTY := true
+	DELETE_NOWAIT := true
+	EXCHANGE := "exchange_opt"
+	KEY := "key"
+	statusCh := make(chan Event, chCapacity)
+
+	validators := []trace.TraceValidator{
+		{
+			Name: "PublishWithDeferredConfirmWithContext",
+			Tag:  QueueName,
+			Expectations: []trace.FieldExpectation{
+				{
+					Field: "Key",
+					Value: reflect.ValueOf(KEY),
+				},
+				{
+					Field: "Exchange",
+					Value: reflect.ValueOf(EXCHANGE),
+				},
+				{
+					Field: "Mandatory",
+					Value: reflect.ValueOf(MANDATORY),
+				},
+				{
+					Field: "Immediate",
+					Value: reflect.ValueOf(IMMEDIATE),
+				},
+			},
+		},
+		{
+			Name: "QueueDelete",
+			Tag:  QueueName,
+			Expectations: []trace.FieldExpectation{
+				{
+					Field: "Queue",
+					Value: reflect.ValueOf(QueueName),
+				},
+				{
+					Field: "IfUnused",
+					Value: reflect.ValueOf(IF_UNUSED),
+				},
+				{
+					Field: "IfEmpty",
+					Value: reflect.ValueOf(IF_EMPTY),
+				},
+				{
+					Field: "NoWait",
+					Value: reflect.ValueOf(DELETE_NOWAIT),
+				},
+			},
+		},
+		{
+			Name: "ExchangeDelete",
+			Tag:  EXCHANGE,
+			Expectations: []trace.FieldExpectation{
+				{
+					Field: "Exchange",
+					Value: reflect.ValueOf(EXCHANGE),
+				},
+				{
+					Field: "IfUnused",
+					Value: reflect.ValueOf(IF_UNUSED),
+				},
+				{
+					Field: "NoWait",
+					Value: reflect.ValueOf(DELETE_NOWAIT),
+				},
+			},
+		},
+	}
+	ctxMaster, ctxCancel := trace.ConsumeTracesContext(validators)
+	defer ctxCancel()
+
+	eventCounters := &EventCounters{
+		Up:           &SafeCounter{},
+		MsgPublished: &SafeCounter{},
+	}
+	go procStatusEvents(ctxMaster, statusCh, eventCounters, &recoveringCallbackCounter)
+
+	conn := NewConnection(
+		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
+		WithConnectionOptionContext(ctxMaster),
+		WithConnectionOptionNotification(statusCh),
+		WithConnectionOptionName("conn.main"),
+	)
+	// await connections which should have raised a series of events
+	if !ConditionWait(ctxMaster, eventCounters.Up.NotZero, 40*time.Second, 1*time.Second) {
+		t.Fatal("timeout waiting for connection to be ready")
+	}
+
+	topos := make([]*TopologyOptions, 0, 8)
+	topos = append(topos,
+		&TopologyOptions{
+			Name:       EXCHANGE,
+			Declare:    true,
+			IsExchange: true,
+			Durable:    true,
+		},
+		&TopologyOptions{
+			Name:    QueueName,
+			Declare: true,
+			Bind: TopologyBind{
+				Enabled: true,
+				Key:     KEY,
+				Peer:    EXCHANGE,
+			},
+		},
+	)
+
+	// make a publisher + queues infra
+	returnCounter := &SafeCounter{}
+	optPub := DefaultPublisherOptions()
+	optPub.
+		WithKey(KEY).
+		WithExchange(EXCHANGE).
+		WithContext(ctxMaster).
+		WithConfirmationsCount(chCapacity).
+		WithConfirmationNoWait(CONFIRM_NOWAIT).
+		WithImmediate(IMMEDIATE).
+		WithMandatory(MANDATORY)
+
+	publisher := NewPublisher(conn, optPub,
+		WithChannelOptionName("pub.options.test"),
+		WithChannelOptionNotification(statusCh),
+		WithChannelOptionTopology(topos),
+		WithChannelOptionNotifyReturn(OnNotifyReturn(returnCounter)),
+	)
+	defer publisher.Channel().ExchangeDelete(EXCHANGE, IF_UNUSED, DELETE_NOWAIT)
+	defer publisher.Channel().QueueDelete(QueueName, IF_UNUSED, IF_EMPTY, DELETE_NOWAIT)
+	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
+		t.Fatal("publisher not ready yet")
+	}
+
+	// all supported publising methods
+	if err := publisher.Publish(amqp.Publishing{Body: []byte("test")}); err != nil {
+		t.Error("Publish failed", err)
+	}
+	if _, err := publisher.PublishDeferredConfirm(amqp.Publishing{Body: []byte("test")}); err != nil {
+		t.Error("PublishDeferredConfirmconfirm failed", err)
+	}
+	if err := publisher.PublishWithOptions(optPub, amqp.Publishing{Body: []byte("test")}); err != nil {
+		t.Error("PublishWithOptions failed", err)
+	}
+	if _, err := publisher.PublishDeferredConfirmWithOptions(optPub, amqp.Publishing{Body: []byte("test")}); err != nil {
+		t.Error("PublishDeferredConfirmWithOptions failed", err)
+	}
+
+	// parameters via API match the ones passed to the wrapped channel
+	resultsCh := ctxMaster.Value(trace.TraceChannelResultsName).(chan trace.ErrorTrace)
+	if len(resultsCh) > 0 {
+		trace := <-resultsCh
+		t.Errorf("Failed -> %v", trace.Err)
+	}
+
+	// general testing the publisher close/cancel/etc.
+	if returnCounter.Value() != 0 {
+		t.Errorf("no publish returns expected, got %d", returnCounter.Value())
+	}
+
+	// Closing the channel fails when IMMEDIATE is true
+	if err := publisher.Close(); err != nil {
+		// server raises: exception not_implemented: "immediate=true" :-/
+		// t.Error("Close conn failed", err)
+	}
+
+	// still have access to the Channel
+	c := publisher.Channel()
+	if !c.IsClosed() {
+		t.Error("channel should be closed")
+	}
+	//
+	if publisher.AwaitAvailable(0, 0) {
+		t.Error("publisher context should be done")
+	}
+	// all publishing should fail now with amqp.ErrClosed
+	err := publisher.Publish(amqp.Publishing{Body: []byte("test")})
+	if err != amqp.ErrClosed {
+		t.Error("closed: Publish failed", err)
+	}
+	_, err = publisher.PublishDeferredConfirm(amqp.Publishing{Body: []byte("test")})
+	if err != amqp.ErrClosed {
+		t.Error("closed: PublishDeferredConfirmconfirm failed", err)
+	}
+	err = publisher.PublishWithOptions(optPub, amqp.Publishing{Body: []byte("test")})
+	if err != amqp.ErrClosed {
+		t.Error("closed: PublishWithOptions failed", err)
+	}
+	_, err = publisher.PublishDeferredConfirmWithOptions(optPub, amqp.Publishing{Body: []byte("test")})
+	if err != amqp.ErrClosed {
+		t.Error("closed: PublishDeferredConfirmWithOptions failed", err)
+	}
+
 }

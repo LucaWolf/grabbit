@@ -10,36 +10,15 @@ func TestConfirmationOutcome_String(t *testing.T) {
 		i    ConfirmationOutcome
 		want string
 	}{
-		{
-			"ConfirmationTimeOut",
-			ConfirmationTimeOut,
-			"no timely response",
-		},
-		{
-			"ConfirmationClosed",
-			ConfirmationClosed,
-			"data confirmation channel is closed",
-		},
-		{
-			"ConfirmationDisabled",
-			ConfirmationDisabled,
-			"base channel has not been put into confirm mode",
-		},
-		{
-			"ConfirmationPrevious",
-			ConfirmationPrevious,
-			"lower sequence number than expected",
-		},
-		{
-			"ConfirmationACK",
-			ConfirmationACK,
-			"ACK (publish confirmed)",
-		},
-		{
-			"ConfirmationNAK",
-			ConfirmationNAK,
-			"NAK (publish negative acknowledgement)",
-		},
+		{ "ConfirmationTimeOut", ConfirmationTimeOut, "no timely response" },
+		{ "ConfirmationClosed", ConfirmationClosed, "data confirmation channel is closed" },
+		{ "ConfirmationDisabled", ConfirmationDisabled, "base channel has not been put into confirm mode" },
+		{ "ConfirmationPrevious", ConfirmationPrevious, "lower sequence number than expected" },
+		{ "ConfirmationACK", ConfirmationACK, "ACK (publish confirmed)" },
+		{ "ConfirmationNAK", ConfirmationNAK, "NAK (publish negative acknowledgement)" },
+		//----------------
+		{ "out-of-bound-lower", ConfirmationTimeOut - 1, "ConfirmationOutcome(-1)" },
+		{ "out-of-bound-upper", ConfirmationNAK + 1, "ConfirmationOutcome(6)" },
 
 	}
 	for _, tt := range tests {

@@ -43,6 +43,8 @@ func DefaultPublisherOptions() PublisherOptions {
 
 // WithConfirmationNoWait sets publisher's confirmation mode.
 // Returns the updated PublisherOptions.
+//
+// WARNING: True parameter seems to block the Confirm operation on the channel.
 func (opt *PublisherOptions) WithConfirmationNoWait(confNoWait bool) *PublisherOptions {
 	opt.ConfirmationNoWait = confNoWait
 	return opt
@@ -82,6 +84,9 @@ func (opt *PublisherOptions) WithMandatory(mandatory bool) *PublisherOptions {
 
 // WithImmediate sets the deliveries being immediate flag.
 // Returns the updated PublisherOptions.
+//
+// WARNING: True is no longer supported by recent RabbitMQ server.
+// (Ref: https://github.com/streadway/amqp/issues/45)
 func (opt *PublisherOptions) WithImmediate(immediate bool) *PublisherOptions {
 	opt.Immediate = immediate
 	return opt
