@@ -304,7 +304,7 @@ func (ch *Channel) makeTopology(recovering bool) {
 // declareExchange is a function that declares an exchange in RabbitMQ.
 //
 // It takes in a *amqp.Channel and a *TopologyOptions as parameters.
-// It returns an error.
+// It returns an error if the exchange declaration fails or the any binding fails.
 func declareExchange(ch *amqp.Channel, t *TopologyOptions) error {
 	err := ch.ExchangeDeclare(t.Name, t.Kind, t.Durable, t.AutoDelete, t.Internal, t.NoWait, t.Args)
 	if err == nil && t.Bind.Enabled {
@@ -323,7 +323,7 @@ func declareExchange(ch *amqp.Channel, t *TopologyOptions) error {
 //
 // Returns:
 //   - amqp.Queue: The declared queue.
-//   - error: An error object if there was an issue with the declaration or the additional operations.
+//   - error: set if issues with the declaration or any queue binding operations.
 func declareQueue(ch *amqp.Channel, t *TopologyOptions) (amqp.Queue, error) {
 	queue, err := ch.QueueDeclare(t.Name, t.Durable, t.AutoDelete, t.Exclusive, t.NoWait, t.Args)
 	if err == nil {

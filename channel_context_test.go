@@ -27,18 +27,7 @@ func TestContextCancellation(t *testing.T) {
 	ctxBeta, _ := context.WithCancel(ctxAlpha)
 	defer ctxAlphaCancel()
 
-	// create two independent channels; expect their inner contexts to become decoupled
-	alphaCh := NewChannel(conn,
-		WithChannelOptionContext(ctxAlpha),
-		WithChannelOptionName("chan.alpha"),
-		WithChannelOptionNotification(alphaStatusChan),
-	)
-	betaCh := NewChannel(conn,
-		WithChannelOptionContext(ctxBeta),
-		WithChannelOptionName("chan.beta"),
-		WithChannelOptionNotification(betaStatusChan),
-	)
-
+	// events accounting
 	alphaEventCounters := &EventCounters{
 		Up:       &SafeCounter{},
 		Down:     &SafeCounter{},
@@ -54,6 +43,17 @@ func TestContextCancellation(t *testing.T) {
 		Recovery: &SafeCounter{},
 	}
 	go procStatusEvents(ctxBeta, betaStatusChan, betaEventCounters, nil)
+	// create two independent channels; expect their inner contexts to become decoupled
+	alphaCh := NewChannel(conn,
+		WithChannelOptionContext(ctxAlpha),
+		WithChannelOptionName("chan.alpha"),
+		WithChannelOptionNotification(alphaStatusChan),
+	)
+	betaCh := NewChannel(conn,
+		WithChannelOptionContext(ctxBeta),
+		WithChannelOptionName("chan.beta"),
+		WithChannelOptionNotification(betaStatusChan),
+	)
 
 	if !ConditionWait(ctxAlpha, alphaEventCounters.Up.NotZero, 30*time.Second, 0) {
 		t.Fatal("timeout waiting for Alpha connection to be ready")

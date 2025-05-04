@@ -31,6 +31,11 @@ func TestChannelTopology(t *testing.T) {
 	qName := "test_queue"
 	qDurable := false // we want to test if recreated after recovery
 
+	downCallbackCounter.Reset()
+	upCallbackCounter.Reset()
+	recoveringCallbackCounter.Reset()
+	delayerCallbackCounter.Reset()
+
 	conn := NewConnection(
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
 		WithConnectionOptionName("test.ctx"),
@@ -49,13 +54,7 @@ func TestChannelTopology(t *testing.T) {
 		Declare:       true,
 	})
 
-	// create two independent channels; expect their inner contexts to become decoupled
-	testCh := NewChannel(conn,
-		WithChannelOptionContext(ctx),
-		WithChannelOptionName("chan.alpha"),
-		WithChannelOptionNotification(statusCh),
-		WithChannelOptionTopology(topos),
-	)
+	// events accounting
 	chCounters := &EventCounters{
 		Up:       &SafeCounter{},
 		Down:     &SafeCounter{},
@@ -63,12 +62,39 @@ func TestChannelTopology(t *testing.T) {
 		Recovery: &SafeCounter{},
 	}
 	go procStatusEvents(ctx, statusCh, chCounters, nil)
+	// create the test channel
+	testCh := NewChannel(conn,
+		WithChannelOptionContext(ctx),
+		WithChannelOptionName("chan.alpha"),
+		WithChannelOptionNotification(statusCh),
+		WithChannelOptionTopology(topos),
+		// also test these callbacks are actually called at some point
+		WithChannelOptionDown(connDownCB),
+		WithChannelOptionUp(connUpCB),
+		WithChannelOptionRecovering(connReconnectCB),
+		WithChannelOptionDelay(tracingDelayer{Value: time.Second}),
+	)
 
+	// channel setup takes a while (we don't wait here for connection completion)
+	// so it will trigger quite a few "recovery" and "delayer" callbacks
+	if !ConditionWait(ctx, recoveringCallbackCounter.NotZero, 3*time.Second, 0) {
+		t.Fatal("timeout waiting for channel to setup/recovery event")
+	}
+
+	// link-up
 	if !ConditionWait(ctx, chCounters.Up.NotZero, 30*time.Second, 0) {
 		t.Fatal("timeout waiting for channel to be ready")
 	}
-	<-time.After(1 * time.Second)
-	if chCounters.Down.NotZero() || chCounters.Closed.NotZero() {
+	if !ConditionWait(ctx, upCallbackCounter.NotZero, 3*time.Second, 0) {
+		t.Fatal("timeout waiting for channel to be ready (cb)")
+	}
+
+	// there should be no unrequested hiccups on the channel
+	if ConditionWait(
+		ctx,
+		func() bool { return chCounters.Down.NotZero() || chCounters.Closed.NotZero() },
+		3*time.Second,
+		0) {
 		t.Error("channel went down/closed unexpectedly")
 	}
 
@@ -97,7 +123,10 @@ func TestChannelTopology(t *testing.T) {
 
 	// Forcefully close test specific connection
 	upCounterBefore := chCounters.Up.Value()
+	upCallbackCounterBefore := upCallbackCounter.Value()
 	recoveryCountBefore := chCounters.Recovery.Value()
+	delayerCallbackCounterBefore := delayerCallbackCounter.Value()
+
 	xs, _ := rhClient.ListConnections()
 	for _, x := range xs {
 		if _, err := rhClient.CloseConnection(x.Name); err != nil {
@@ -109,16 +138,27 @@ func TestChannelTopology(t *testing.T) {
 	if !ConditionWait(ctx, chCounters.Down.NotZero, 30*time.Second, 0) {
 		t.Error("timeout waiting for channel to go down")
 	}
+	if !ConditionWait(ctx, downCallbackCounter.NotZero, 3*time.Second, 0) {
+		t.Error("timeout waiting for channel to go down (cb)")
+	}
+
 	// Note: EventClosed is only expected when we cleanly close the channel.
 	// We would have got one for the connection though... but have not used a procStatusEvents for that.
 
 	if !ConditionWait(ctx, func() bool { return chCounters.Up.Value() > upCounterBefore }, 30*time.Second, 0) {
 		t.Error("expecting Up count to increase")
 	}
+	if !ConditionWait(ctx, func() bool { return upCallbackCounter.Value() > upCallbackCounterBefore }, 3*time.Second, 0) {
+		t.Error("expecting Up count to increase (cb)")
+	}
+
 	// since we killed the connection and re-establishing usually takes a while,
 	// we expect the channel recovery to fail initially... so an increasing counter
 	if !ConditionWait(ctx, func() bool { return chCounters.Recovery.Value() > recoveryCountBefore }, 30*time.Second, 0) {
 		t.Error("expecting Recovery count to increase")
+	}
+	if !ConditionWait(ctx, func() bool { return delayerCallbackCounter.Value() > delayerCallbackCounterBefore }, 30*time.Second, 0) {
+		t.Error("expecting Recovery count to increase (cb)")
 	}
 
 	// test the queue name again

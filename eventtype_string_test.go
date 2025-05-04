@@ -25,6 +25,7 @@ func TestEventType_String(t *testing.T) {
 		{ "EventDefineTopology", EventDefineTopology, "DefineTopology"},
 		{ "EventDataExhausted", EventDataExhausted, "DataExhausted"},
 		{ "EventDataPartial", EventDataPartial, "DataPartial"},
+		//----------------
 		{ "out-of-bound-lower", EventUp - 1, "EventType(-1)"},
 		{ "out-of-bound-upper", EventDataPartial + 1, "EventType(15)"},		
 	}

@@ -34,9 +34,8 @@ func SomeErrFromError(err error, isSet bool) OptionalError {
 // Return type:
 // - OptionalError: the created OptionalError.
 func SomeErrFromString(text string) OptionalError {
-	err := errors.New(text)
 	return OptionalError{
-		err:   err,
+		err:   errors.New(text),
 		isSet: true,
 	}
 }
@@ -46,7 +45,7 @@ func SomeErrFromString(text string) OptionalError {
 // err - The error to return if the optional error is not set.
 // error - The optional error.
 func (e OptionalError) Or(err error) error {
-	if e.isSet {
+	if e.err != nil && e.isSet {
 		return e.err
 	}
 	return err
@@ -66,5 +65,5 @@ func (e OptionalError) Error() string {
 // This function does not take any parameters.
 // It returns a boolean value.
 func (e OptionalError) IsSet() bool {
-	return e.isSet
+	return e.err != nil && e.isSet
 }

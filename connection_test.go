@@ -8,24 +8,6 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-var downCallbackCounter SafeCounter
-var upCallbackCounter SafeCounter
-var recoveringCallbackCounter SafeCounter
-
-func connDownCB(name string, err OptionalError) bool {
-	downCallbackCounter.Add(1)
-	return true // want continuing
-}
-
-func connUpCB(name string) {
-	upCallbackCounter.Add(1)
-}
-
-func connReconnectCB(name string, retry int) bool {
-	recoveringCallbackCounter.Add(1)
-	return true // want continuing
-}
-
 func TestNewConnection(t *testing.T) {
 	connStatusChan := make(chan Event, 32)
 
@@ -100,7 +82,7 @@ func TestConnectionDenyRecovery(t *testing.T) {
 	}
 
 	conn := NewConnection(
-		"amqp://guest:bad_pwd@localhost:5672/",
+		CONN_ADDR_RMQ_REJECT_PWD,
 		amqp.Config{},
 		WithConnectionOptionName("grabbit-test"),
 		WithConnectionOptionDown(connDownCB),
@@ -164,7 +146,7 @@ func TestConnectionDelayerCancelled(t *testing.T) {
 	recoveringCallbackCounter.Reset()
 
 	conn := NewConnection(
-		"amqp://guest:bad_pwd@localhost:5672/",
+		CONN_ADDR_RMQ_REJECT_PWD,
 		amqp.Config{},
 		WithConnectionOptionName("grabbit-test"),
 		WithConnectionOptionDown(connDownCB),
