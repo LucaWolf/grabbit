@@ -2,7 +2,6 @@ package grabbit
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -11,25 +10,40 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-func expectSingleQueue(cli *rabbithole.Client, name string) error {
+func expectQueue(cli *rabbithole.Client, name string) error {
 	qs, err := cli.ListQueues()
 	if err != nil {
 		return err
 	}
-	if len(qs) != 1 {
-		return errors.New("expecting a single queue")
+	for _, q := range qs {
+		if q.Name == name {
+			return nil
+		}
 	}
-	q := qs[0]
-	if q.Name != name {
-		return fmt.Errorf("expecting %s got %s", name, q.Name)
+	return fmt.Errorf("queue %s not found", name)
+}
+
+func expectExchange(cli *rabbithole.Client, name string) error {
+	es, err := cli.ListExchanges()
+	if err != nil {
+		return err
 	}
-	return nil
+	for _, e := range es {
+		if e.Name == name {
+			return nil
+		}
+	}
+	return fmt.Errorf("exchange %s not found", name)
 }
 
 // TestChannelTopology tests that topologies are re-created after the current channel is recovered
 func TestChannelTopology(t *testing.T) {
-	qName := "test_queue"
-	qDurable := false // we want to test if recreated after recovery
+	const KEY_ALERTS = "key.pagers"                         // routing key into pagers queue
+	const KEY_EMAILS = "key.emails"                         // routing key into emails queue
+	const EXCHANGE_NOTIFICATIONS = "exchange.notifications" // direct key dispatch exchange
+	const QUEUE_PAGERS = "queue.pagers"                     // alerts deposit for alert routed messages
+	const QUEUE_EMAILS = "queue.emails"                     // emails deposit for info routed messages
+	qDurable := false                                       // we want to test if recreated after recovery
 
 	downCallbackCounter.Reset()
 	upCallbackCounter.Reset()
@@ -46,12 +60,38 @@ func TestChannelTopology(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel() // 'goleak' would complain w/out final clean-up
 
-	topos := make([]*TopologyOptions, 0, 2)
+	topos := make([]*TopologyOptions, 0, 4)
+	// create an ephemeral 'logs' exchange
 	topos = append(topos, &TopologyOptions{
-		Name:          qName,
+		Name:          EXCHANGE_NOTIFICATIONS,
+		Declare:       true,
+		IsExchange:    true,
+		IsDestination: false,
+		Durable:       false,
+		Kind:          "direct",
+	})
+	// create an ephemeral 'pagers' queue, bound to 'logs' exchange and route key 'alert'
+	topos = append(topos, &TopologyOptions{
+		Name:          QUEUE_PAGERS,
+		Declare:       true,
+		Durable:       qDurable,
+		IsDestination: true,
+		Bind: TopologyBind{
+			Enabled: true,
+			Peer:    EXCHANGE_NOTIFICATIONS,
+			Key:     KEY_ALERTS,
+		},
+	})
+	topos = append(topos, &TopologyOptions{
+		Name:          QUEUE_EMAILS,
 		IsDestination: true,
 		Durable:       qDurable,
 		Declare:       true,
+		Bind: TopologyBind{
+			Enabled: true,
+			Peer:    EXCHANGE_NOTIFICATIONS,
+			Key:     KEY_EMAILS,
+		},
 	})
 
 	// events accounting
@@ -103,7 +143,7 @@ func TestChannelTopology(t *testing.T) {
 	baseCh := testCh.Channel()
 	amqpCh := baseCh.Super()
 	baseCh.Lock()
-	_, err := amqpCh.QueueDeclarePassive(qName, qDurable, false, false, false, nil)
+	_, err := amqpCh.QueueDeclarePassive(QUEUE_EMAILS, qDurable, false, false, false, nil)
 	baseCh.UnLock()
 	if err != nil {
 		t.Error("failed to fetched queue for channel topology", err)
@@ -117,8 +157,15 @@ func TestChannelTopology(t *testing.T) {
 		t.Error("rabbithole controller unavailable")
 	}
 
-	if err := expectSingleQueue(rhClient, qName); err != nil {
-		t.Error("rabbithole failed to list queue", err)
+	// initial setup - ephemeral exchanges and queues
+	if err := expectQueue(rhClient, QUEUE_EMAILS); err != nil {
+		t.Error("rabbithole failed to list queue:", err, QUEUE_EMAILS)
+	}
+	if err := expectQueue(rhClient, QUEUE_PAGERS); err != nil {
+		t.Error("rabbithole failed to list queue:", err, QUEUE_PAGERS)
+	}
+	if err := expectExchange(rhClient, EXCHANGE_NOTIFICATIONS); err != nil {
+		t.Error("rabbithole failed to list exchange:", err, EXCHANGE_NOTIFICATIONS)
 	}
 
 	// Forcefully close test specific connection
@@ -161,8 +208,14 @@ func TestChannelTopology(t *testing.T) {
 		t.Error("expecting Recovery count to increase (cb)")
 	}
 
-	// test the queue name again
-	if err := expectSingleQueue(rhClient, qName); err != nil {
-		t.Error("rabbithole failed to list queue:", err)
+	// fianal setup
+	if err := expectQueue(rhClient, QUEUE_EMAILS); err != nil {
+		t.Error("rabbithole failed to list queue:", err, QUEUE_EMAILS)
+	}
+	if err := expectQueue(rhClient, QUEUE_PAGERS); err != nil {
+		t.Error("rabbithole failed to list queue:", err, QUEUE_PAGERS)
+	}
+	if err := expectExchange(rhClient, EXCHANGE_NOTIFICATIONS); err != nil {
+		t.Error("rabbithole failed to list exchange:", err, EXCHANGE_NOTIFICATIONS)
 	}
 }

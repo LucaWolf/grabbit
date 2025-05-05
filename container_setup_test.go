@@ -221,6 +221,7 @@ var downCallbackCounter SafeCounter
 var upCallbackCounter SafeCounter
 var recoveringCallbackCounter SafeCounter
 var delayerCallbackCounter SafeCounter
+var pwdCallbackCounter SafeCounter
 
 func connDownCB(name string, err OptionalError) bool {
 	downCallbackCounter.Add(1)
@@ -244,6 +245,15 @@ type tracingDelayer struct {
 func (delayer tracingDelayer) Delay(retry int) time.Duration {
 	delayerCallbackCounter.Add(1)
 	return delayer.Value
+}
+
+type pwdProvider struct {
+	Value string
+}
+
+func (p pwdProvider) Password() (string, error) {
+	pwdCallbackCounter.Add(1)
+	return p.Value, nil
 }
 
 // procStatusEvents is a coroutine that processes the connection status events.
