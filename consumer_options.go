@@ -79,6 +79,7 @@ func (opt *ConsumerOptions) WithPrefetchCount(count int) *ConsumerOptions {
 }
 
 // WithPrefetchSize sets the consumer's prefetch size.
+// Not supported by RabbitMQ and seems blocking the consumers. AVOID using it!
 // Returns the updated ConsumerOptions.
 func (opt *ConsumerOptions) WithPrefetchSize(size int) *ConsumerOptions {
 	opt.PrefetchSize = size
@@ -108,6 +109,10 @@ func (opt *ConsumerOptions) WithAutoAck(autoAck bool) *ConsumerOptions {
 
 // WithExclusive sets whether the consuming mode should be exclusive.
 // Returns the updated ConsumerOptions.
+//
+// WARNING: a true exclusive consumer blocks all other consumers on the same queue
+// regardless of (using different) connection and channel.
+// Ref: https://github.com/rabbitmq/amqp091-go/issues/253
 func (opt *ConsumerOptions) WithExclusive(exclusive bool) *ConsumerOptions {
 	opt.ConsumerExclusive = exclusive
 	return opt

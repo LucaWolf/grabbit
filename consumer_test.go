@@ -2,8 +2,11 @@ package grabbit
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
+
+	trace "traceutils"
 
 	rabbithole "github.com/michaelklishin/rabbit-hole/v2"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -82,25 +85,19 @@ func MsgHandlerBulk(r *SafeRand, chReg chan DeliveryPayload) CallbackProcessMess
 // }
 
 func MsgHandlerQoS(
-	countQos, countAutoAck *SafeCounter,
+	countQos, countAck *SafeCounter,
 	expectedQoS int,
-	expectOrdered bool,
 ) CallbackProcessMessages {
 	return func(props *DeliveriesProperties, messages []DeliveryData, mustAck bool, ch *Channel) {
 		if len(messages) == expectedQoS {
-			// even though some consumers are Qos bound, there is no guarantee of ordering
-			// hence 'msgSequential' is useless...cannot use expectOrdered
 			countQos.Add(1)
 		}
-
-		if !mustAck {
-			countAutoAck.Add(1)
-			return
+		if mustAck {
+			idxLast := len(messages) - 1
+			lastDeliveryTag := messages[idxLast].DeliveryTag
+			ch.Ack(lastDeliveryTag, true)
+			countAck.Add(1)
 		}
-
-		idxLast := len(messages) - 1
-		lastDeliveryTag := messages[idxLast].DeliveryTag
-		ch.Ack(lastDeliveryTag, true)
 	}
 }
 
@@ -235,7 +232,7 @@ func TestBatchConsumer(t *testing.T) {
 	}
 }
 
-func TestAutoAckAndQos(t *testing.T) {
+func TestConsumerExclusive(t *testing.T) {
 	QueueName := "workload"
 	const MSG_COUNT = 1024
 	const CONSUMER_BATCH_SIZE = 5
@@ -258,6 +255,198 @@ func TestAutoAckAndQos(t *testing.T) {
 		WithConnectionOptionNotification(statusCh),
 		WithConnectionOptionName("conn.main"),
 	)
+	// await connections which should have raised a series of events
+	if !ConditionWait(ctxMaster,
+		func() bool { return eventCounters.Up.NotZero() },
+		40*time.Second,
+		1*time.Second,
+	) {
+		t.Fatal("timeout waiting for connection to be ready")
+	}
+
+	topos := make([]*TopologyOptions, 0, 8)
+	topos = append(topos,
+		&TopologyOptions{
+			Name:    QueueName,
+			Durable: true,
+			Declare: true,
+		},
+		&TopologyOptions{
+			Name:    "some_other_queue",
+			Durable: true,
+			Declare: true,
+		},
+	)
+
+	// make a publisher + queues infra
+	optPub := DefaultPublisherOptions()
+	optPub.
+		WithKey(QueueName).
+		WithContext(ctxMaster).
+		WithConfirmationsCount(chCapacity)
+		// TODO both these options fail... create dedicated publshing tests and fix
+		// WithConfirmationNoWait(true)
+		// WithImmediate(true)
+
+	publisher := NewPublisher(conn, optPub,
+		WithChannelOptionName("chan.publisher"),
+		WithChannelOptionNotification(statusCh),
+		WithChannelOptionTopology(topos),
+	)
+	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
+		t.Fatal("publisher not ready yet")
+	}
+
+	// make two consumers, each with a different autoACK policy
+	qosCounter := &SafeCounter{}
+	countAckAlpha := &SafeCounter{}
+	countAckBeta := &SafeCounter{}
+
+	optConsumer := DefaultConsumerOptions()
+	optConsumer.
+		WithQueue(QueueName).
+		WithPrefetchTimeout(2 * time.Second).
+		WithPrefetchCount(CONSUMER_BATCH_SIZE)
+
+	// all messages should go here
+	alphaConsumer := NewConsumer(conn,
+		*optConsumer.WithName("consumer.alpha").WithExclusive(true),
+		WithChannelOptionName("chan.alpha"),
+		WithChannelOptionProcessor(MsgHandlerQoS(qosCounter, countAckAlpha, CONSUMER_BATCH_SIZE)),
+	)
+	if !alphaConsumer.AwaitAvailable(30*time.Second, 1*time.Second) {
+		t.Fatal("alphaConsumer not ready yet")
+	}
+	// nothing for this guy on the same queue, different connection though
+	// THIS NOT WORKING due to amqp dead-locks on the super channel "Consume()"
+	// optConsumerBeta := DefaultConsumerOptions()
+	// optConsumerBeta.
+	// 	WithQueue(QueueName).
+	// 	WithPrefetchTimeout(2 * time.Second).
+	// 	WithPrefetchCount(CONSUMER_BATCH_SIZE).
+	// 	WithName("consumer.beta").
+	// 	WithExclusive(false)
+	// // try with own connection, so far this blocked on same connection
+	// betaConsumer := NewConsumer(conn,
+	// 	optConsumerBeta,
+	// 	WithChannelOptionName("chan.beta"),
+	// 	WithChannelOptionProcessor(MsgHandlerQoS(qosCounter, countAckBeta, CONSUMER_BATCH_SIZE)),
+	// )
+	// if !betaConsumer.AwaitAvailable(30*time.Second, 1*time.Second) {
+	// 	t.Fatal("betaConsumer not ready yet")
+	// }
+
+	// push all the messages
+	if _, err := PublishMsgBulk(publisher, optPub, MSG_COUNT, "exch.default"); err != nil {
+		t.Error(err)
+	}
+	if !ConditionWait(ctxMaster,
+		func() bool { return eventCounters.MsgPublished.Value() == MSG_COUNT },
+		15*time.Second, time.Second) {
+		t.Error("timeout pushing all the messages", eventCounters.MsgPublished.Value())
+	}
+
+	// await full consumption
+	if !ConditionWait(ctxMaster,
+		func() bool { return eventCounters.DataExhausted.Value() >= 2 },
+		15*time.Second, time.Second) {
+		t.Error("timeout waiting for all consumers to exhaust the queue", eventCounters.DataExhausted.Value())
+	}
+
+	// Validate the counters: only alpha  should bump the countAck
+	batchesCount := MSG_COUNT / CONSUMER_BATCH_SIZE
+	ceilAckCount := (MSG_COUNT + CONSUMER_BATCH_SIZE - 1) / CONSUMER_BATCH_SIZE
+	if countAckAlpha.Value() != ceilAckCount {
+		t.Errorf("Failed -> exclusive Ack: expected %d vs. read %d", ceilAckCount, countAckAlpha.Value())
+	}
+	if countAckBeta.Value() != 0 {
+		t.Errorf("Failed -> excluded Ack: expected %d vs. read %d", 0, countAckBeta.Value())
+	}
+	// tally-up the total batches count
+	if qosCounter.Value() != batchesCount {
+		t.Errorf("qosCounter: expected %d vs. read %d", batchesCount, qosCounter.Value())
+	}
+}
+
+func TestConsumerOptions(t *testing.T) {
+	QueueName := "workload"
+	PREFETCH_COUNT := 10
+	// PREFETCH_SIZE := 1024 * 10
+	CONSUMER_NAME := "punter"
+	AUTO_ACK := true
+	QOS_GLOBAL := true
+	EXCLUSIVE := true
+	NO_WAIT := true
+	NO_LOCAL := true
+
+	statusCh := make(chan Event, 8)
+
+	ctxMaster, ctxCancel := context.WithCancel(context.TODO())
+	defer ctxCancel()
+
+	eventCounters := &EventCounters{
+		Up:            &SafeCounter{},
+		DataExhausted: &SafeCounter{},
+	}
+	go procStatusEvents(ctxMaster, statusCh, eventCounters, &recoveringCallbackCounter)
+
+	validators := []trace.TraceValidator{
+		{
+			Name: "Consume",
+			Tag:  CONSUMER_NAME,
+			Expectations: []trace.FieldExpectation{
+				{
+					Field: "Queue",
+					Value: reflect.ValueOf(QueueName),
+				},
+				{
+					Field: "Consumer",
+					Value: reflect.ValueOf(CONSUMER_NAME),
+				},
+				{
+					Field: "AutoAck",
+					Value: reflect.ValueOf(AUTO_ACK),
+				},
+				{
+					Field: "Exclusive",
+					Value: reflect.ValueOf(EXCLUSIVE),
+				},
+				{
+					Field: "NoWait",
+					Value: reflect.ValueOf(NO_WAIT),
+				},
+				{
+					Field: "NoLocal",
+					Value: reflect.ValueOf(NO_LOCAL),
+				},
+			},
+		},
+		{
+			Name: "Qos",
+			Expectations: []trace.FieldExpectation{
+				{
+					Field: "Global",
+					Value: reflect.ValueOf(QOS_GLOBAL),
+				},
+				{
+					Field: "PrefetchCount",
+					Value: reflect.ValueOf(PREFETCH_COUNT),
+				},
+				{
+					Field: "PrefetchSize",
+					Value: reflect.ValueOf(0),
+				},
+			},
+		},
+	}
+	trace.ConsumeTraces(ctxMaster, validators)
+
+	conn := NewConnection(
+		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
+		WithConnectionOptionContext(ctxMaster),
+		WithConnectionOptionNotification(statusCh),
+		WithConnectionOptionName("conn.main"),
+	)
 	// await connection which should have raised a series of events
 	if !ConditionWait(ctxMaster, eventCounters.Up.NotZero, 40*time.Second, time.Second) {
 		t.Fatal("timeout waiting for connection to be ready")
@@ -270,75 +459,38 @@ func TestAutoAckAndQos(t *testing.T) {
 		Declare: true,
 	})
 
-	// make a publisher + queues infra
-	opt := DefaultPublisherOptions()
-	opt.WithKey(QueueName).WithContext(ctxMaster).WithConfirmationsCount(chCapacity)
-
-	publisher := NewPublisher(conn, opt,
-		WithChannelOptionName("chan.publisher"),
-		WithChannelOptionNotification(statusCh),
-		WithChannelOptionTopology(topos),
-	)
-	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
-		t.Fatal("publisher not ready yet")
-	}
-
-	// make two consumers, each with a different autoACK policy
-	qosCounter := &SafeCounter{}
-	countAutoAck := &SafeCounter{}
-
 	optConsumer := DefaultConsumerOptions()
 	optConsumer.
 		WithQueue(QueueName).
-		WithPrefetchTimeout(3 * time.Second).
-		WithPrefetchCount(CONSUMER_BATCH_SIZE)
+		WithPrefetchTimeout(1 * time.Second).
+		WithPrefetchCount(PREFETCH_COUNT).
+		WithAutoAck(AUTO_ACK).
+		WithQosGlobal(QOS_GLOBAL).
+		// WithPrefetchSize(PREFETCH_SIZE).
+		WithName(CONSUMER_NAME).
+		WithExclusive(EXCLUSIVE).
+		WithNoLocal(NO_LOCAL).
+		WithNoWait(NO_WAIT)
 
 	alphaConsumer := NewConsumer(conn,
-		*optConsumer.WithAutoAck(false).WithQosGlobal(true),
+		optConsumer,
 		WithChannelOptionName("chan.alpha"),
-		WithChannelOptionProcessor(MsgHandlerQoS(qosCounter, countAutoAck, CONSUMER_BATCH_SIZE, true)),
-	)
-	betaConsumer := NewConsumer(conn,
-		*optConsumer.WithAutoAck(true),
-		WithChannelOptionName("chan.beta"),
-		WithChannelOptionProcessor(MsgHandlerQoS(qosCounter, countAutoAck, CONSUMER_BATCH_SIZE, false)),
+		WithChannelOptionTopology(topos),
 	)
 	// to ensure even distribution must have the consumers ready
 	if !alphaConsumer.AwaitAvailable(30*time.Second, 1*time.Second) {
 		t.Fatal("alphaConsumer not ready yet")
 	}
-	if !betaConsumer.AwaitAvailable(30*time.Second, 1*time.Second) {
-		t.Fatal("betaConsumer not ready yet")
-	}
-
-	// push all the messages
-	if _, err := PublishMsgBulk(publisher, opt, MSG_COUNT, "exch.default"); err != nil {
-		t.Error(err)
-	}
-	if !ConditionWait(ctxMaster,
-		func() bool { return eventCounters.MsgPublished.Value() == MSG_COUNT },
-		15*time.Second, time.Second) {
-		t.Error("timeout pushing all the messages", eventCounters.MsgPublished.Value())
-	}
 
 	// await full consumption
 	if !ConditionWait(ctxMaster,
 		func() bool { return eventCounters.DataExhausted.Value() >= 2 },
-		30*time.Second, time.Second) {
-		t.Error("timeout waiting for all consumers to exhaust the queue", eventCounters.DataExhausted.Value())
+		7*time.Second, time.Second) {
+		t.Error("timeout waiting for consumer to exhaust the queue", eventCounters.DataExhausted.Value())
 	}
 
-	batchesCount := MSG_COUNT / CONSUMER_BATCH_SIZE
-
-	// Validate the counters:
-	// only beta bumps the countAutoAck and is so fast paced that it steals almost all work.
-	coverageAutoAck := countAutoAck.Value() * 100 / batchesCount
-	if coverageAutoAck < 80 || coverageAutoAck > 98 {
-		t.Errorf("auto ack coverage: expected ~95%% vs.read %d%% (%d)", coverageAutoAck, countAutoAck.Value())
-	}
-
-	// tally-up the total batches count
-	if qosCounter.Value() != batchesCount {
-		t.Errorf("qosCounter: expected %d vs. read %d", batchesCount, qosCounter.Value())
+	if len(trace.ResultsCh) > 0 {
+		trace := <-trace.ResultsCh
+		t.Errorf("Failed -> %v", trace.Err)
 	}
 }

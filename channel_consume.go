@@ -6,12 +6,10 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// consumer sets up the consumer feed for the given channel.
-//
-// It takes a pointer to a Channel as a parameter.
-// There is no return value.
+// consumer sets up the amqp Deliveries feed for the given channel
+// (wraps the amqp.Channel.Consume method after setting the QoS).
 func (ch *Channel) consumer() <-chan amqp.Delivery {
-	if err := ch.baseChan.super.Qos(ch.opt.implParams.PrefetchCount, ch.opt.implParams.PrefetchSize, ch.opt.implParams.QosGlobal); err != nil {
+	if err := ch.Qos(ch.opt.implParams.PrefetchCount, ch.opt.implParams.PrefetchSize, ch.opt.implParams.QosGlobal); err != nil {
 		Event{
 			SourceType: CliChannel,
 			SourceName: ch.opt.name,
@@ -25,7 +23,7 @@ func (ch *Channel) consumer() <-chan amqp.Delivery {
 		qName = ch.queue // only when IsDestination
 	}
 
-	consumer, err := ch.baseChan.super.Consume(qName,
+	consumer, err := ch.Consume(qName,
 		ch.opt.implParams.ConsumerName,
 		ch.opt.implParams.ConsumerAutoAck,
 		ch.opt.implParams.ConsumerExclusive,

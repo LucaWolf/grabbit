@@ -117,6 +117,7 @@ func (ch *Channel) manage() {
 			recovering = false
 			notifiers = ch.notifiers()
 			if ch.opt.implParams.IsConsumer {
+				notifiers.Consumer = ch.consumer()
 				go ch.gobble(notifiers.Consumer)
 			}
 		}

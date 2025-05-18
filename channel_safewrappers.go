@@ -3,6 +3,8 @@ package grabbit
 import (
 	"context"
 
+	trace "traceutils"
+
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -197,6 +199,32 @@ func (ch *Channel) ExchangeDeclare(name, kind string, durable, autoDelete, inter
 		return ch.baseChan.super.ExchangeDeclare(name, kind, durable, autoDelete, internal, noWait, args)
 	}
 	return amqp.ErrClosed
+}
+
+// Qos safely wraps the base channel Qos method, setting quality of service parameters.
+func (ch *Channel) Qos(prefetchCount, prefetchSize int, global bool) error {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	if ch.baseChan.super != nil {
+		result := ch.baseChan.super.Qos(prefetchCount, prefetchSize, global)
+		trace.Qos(prefetchCount, prefetchSize, global)
+		return result
+	}
+	return amqp.ErrClosed
+}
+
+// Consume safely wraps the base channel Consume.
+func (ch *Channel) Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) (<-chan amqp.Delivery, error) {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	if ch.baseChan.super != nil {
+		result, err := ch.baseChan.super.Consume(queue, consumer, autoAck, exclusive, noLocal, noWait, args)
+		trace.Consume(queue, consumer, autoAck, exclusive, noLocal, noWait, args)
+		return result, err
+	}
+	return nil, amqp.ErrClosed
 }
 
 // QueueDeclareWithTopology safely declares a desired queue as described in the parameter;
