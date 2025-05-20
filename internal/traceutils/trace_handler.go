@@ -68,6 +68,23 @@ func doConsumeTraces(ctx context.Context, validators []TraceValidator) {
 						Tag:  trace.Tag,
 						Err:  fmt.Errorf("field %s not found. Adjust your FieldExpectation(s)", e.Field),
 					}
+					continue
+				}
+				// maps are not comparable and require special handling
+				if param.Kind() == reflect.Map {
+					if !reflect.DeepEqual(param.Interface(), e.Value.Interface()) {
+						ResultsCh <- ErrorTrace{
+							Name: trace.Name,
+							Tag:  trace.Tag,
+							Err: fmt.Errorf(
+								"field %s mismatch: Expected %#v, got %#v",
+								e.Field,
+								e.Value,
+								param,
+							),
+						}
+					}
+					continue
 				}
 				if !param.Equal(e.Value) {
 					ResultsCh <- ErrorTrace{

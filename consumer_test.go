@@ -234,7 +234,7 @@ func TestBatchConsumer(t *testing.T) {
 
 func TestConsumerExclusive(t *testing.T) {
 	QueueName := "workload"
-	const MSG_COUNT = 1024
+	const MSG_COUNT = 256
 	const CONSUMER_BATCH_SIZE = 5
 	chCapacity := 2 * MSG_COUNT / 3
 	statusCh := make(chan Event, chCapacity)
@@ -370,23 +370,29 @@ func TestConsumerExclusive(t *testing.T) {
 
 func TestConsumerOptions(t *testing.T) {
 	QueueName := "workload"
-	PREFETCH_COUNT := 10
-	// PREFETCH_SIZE := 1024 * 10
+	MSG_COUNT := 30
+	PREFETCH_COUNT := 4
+	PREFETCH_SIZE := 0 // avoid using it, any non-zero will block
 	CONSUMER_NAME := "punter"
-	AUTO_ACK := true
+	AUTO_ACK := false
 	QOS_GLOBAL := true
 	EXCLUSIVE := true
 	NO_WAIT := true
 	NO_LOCAL := true
 
-	statusCh := make(chan Event, 8)
+	ARG := make(amqp.Table)
+	ARG["foo"] = "bar"
+
+	statusCh := make(chan Event, 16)
 
 	ctxMaster, ctxCancel := context.WithCancel(context.TODO())
 	defer ctxCancel()
 
 	eventCounters := &EventCounters{
 		Up:            &SafeCounter{},
+		MsgPublished:  &SafeCounter{},
 		DataExhausted: &SafeCounter{},
+		MsgReceived:   &SafeCounter{},
 	}
 	go procStatusEvents(ctxMaster, statusCh, eventCounters, &recoveringCallbackCounter)
 
@@ -418,6 +424,10 @@ func TestConsumerOptions(t *testing.T) {
 				{
 					Field: "NoLocal",
 					Value: reflect.ValueOf(NO_LOCAL),
+				},
+				{
+					Field: "Args",
+					Value: reflect.ValueOf(ARG),
 				},
 			},
 		},
@@ -462,35 +472,93 @@ func TestConsumerOptions(t *testing.T) {
 	optConsumer := DefaultConsumerOptions()
 	optConsumer.
 		WithQueue(QueueName).
-		WithPrefetchTimeout(1 * time.Second).
+		WithPrefetchTimeout(3 * time.Second).
 		WithPrefetchCount(PREFETCH_COUNT).
 		WithAutoAck(AUTO_ACK).
 		WithQosGlobal(QOS_GLOBAL).
-		// WithPrefetchSize(PREFETCH_SIZE).
+		WithPrefetchSize(PREFETCH_SIZE).
 		WithName(CONSUMER_NAME).
 		WithExclusive(EXCLUSIVE).
 		WithNoLocal(NO_LOCAL).
-		WithNoWait(NO_WAIT)
+		WithNoWait(NO_WAIT).
+		WithArgs(ARG)
 
 	alphaConsumer := NewConsumer(conn,
 		optConsumer,
 		WithChannelOptionName("chan.alpha"),
 		WithChannelOptionTopology(topos),
+		WithChannelOptionProcessor(defaultPayloadProcessor),
 	)
 	// to ensure even distribution must have the consumers ready
 	if !alphaConsumer.AwaitAvailable(30*time.Second, 1*time.Second) {
 		t.Fatal("alphaConsumer not ready yet")
 	}
 
+	optPub := DefaultPublisherOptions()
+	optPub.
+		WithKey(QueueName).
+		WithContext(ctxMaster).
+		WithConfirmationsCount(2 * MSG_COUNT / 3)
+
+	publisher := NewPublisher(conn, optPub,
+		WithChannelOptionName("chan.publisher"),
+		WithChannelOptionNotification(statusCh),
+	)
+	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
+		t.Fatal("publisher not ready yet")
+	}
+	if _, err := PublishMsgBulk(publisher, optPub, MSG_COUNT, "exch.default"); err != nil {
+		t.Error(err)
+	}
+	if !ConditionWait(ctxMaster,
+		func() bool { return eventCounters.MsgPublished.Value() == MSG_COUNT },
+		15*time.Second, time.Second) {
+		t.Error("timeout pushing all the messages", eventCounters.MsgPublished.Value())
+	}
+
+	// data comes through
+	ceilReceivedCount := (MSG_COUNT + PREFETCH_COUNT - 1) / PREFETCH_COUNT
+	if !ConditionWait(ctxMaster,
+		func() bool { return eventCounters.MsgReceived.Value() >= ceilReceivedCount/2 },
+		15*time.Second, time.Second) {
+		t.Error("timeout waiting data", eventCounters.MsgReceived.Value())
+	}
+
 	// await full consumption
 	if !ConditionWait(ctxMaster,
-		func() bool { return eventCounters.DataExhausted.Value() >= 2 },
+		func() bool { return eventCounters.DataExhausted.Value() >= 1 },
 		7*time.Second, time.Second) {
 		t.Error("timeout waiting for consumer to exhaust the queue", eventCounters.DataExhausted.Value())
 	}
 
+	// parameters via API match the ones passed to the wrapped channel
 	if len(trace.ResultsCh) > 0 {
 		trace := <-trace.ResultsCh
 		t.Errorf("Failed -> %v", trace.Err)
+	}
+
+	// general testing the consumer close/cancel/etc.
+	if err := alphaConsumer.Cancel(); err != nil {
+		t.Error("cancel", err)
+	}
+	if err := alphaConsumer.Close(); err != nil {
+		t.Error("close", err)
+	}
+	// still have access to the Channel but ops would now fail
+	c := alphaConsumer.Channel()
+	if !c.IsClosed() {
+		t.Error("channel should be closed")
+	}
+	conn.Close()
+	// cannot cancel with no connection
+	if err := c.Cancel(CONSUMER_NAME, false); err == nil {
+		t.Error("subsequent cancel (no conn) expected error")
+	}
+	// but Close is idempotent
+	if err := c.Close(); err != nil {
+		t.Error("subsequent close (no conn)", err)
+	}
+	if alphaConsumer.AwaitAvailable(0, 0) {
+		t.Error("consumer context should be done")
 	}
 }

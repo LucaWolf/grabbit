@@ -215,6 +215,7 @@ type EventCounters struct {
 	Recovery      *SafeCounter // performing initial or recovery reconnection
 	DataExhausted *SafeCounter // consumer has no more data
 	MsgPublished  *SafeCounter // messages published
+	MsgReceived   *SafeCounter // messages received
 }
 
 var downCallbackCounter SafeCounter
@@ -306,6 +307,10 @@ func procStatusEvents(
 			case EventMessagePublished:
 				if eventCounters.MsgPublished != nil {
 					eventCounters.MsgPublished.Add(1)
+				}
+			case EventMessageReceived:
+				if eventCounters.MsgReceived != nil {
+					eventCounters.MsgReceived.Add(1)
 				}
 			default:
 			}
