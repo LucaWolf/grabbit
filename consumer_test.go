@@ -153,7 +153,7 @@ func TestBatchConsumer(t *testing.T) {
 	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
 		t.Fatal("publisher not ready yet")
 	}
-	if _, err := PublishMsgBulk(publisher, opt, MSG_COUNT, "exch.default"); err != nil {
+	if _, err := PublishMsgBulkOptions(publisher, opt, MSG_COUNT, "exch.default"); err != nil {
 		t.Error(err)
 	}
 	if !ConditionWait(ctxMaster,
@@ -256,11 +256,7 @@ func TestConsumerExclusive(t *testing.T) {
 		WithConnectionOptionName("conn.main"),
 	)
 	// await connections which should have raised a series of events
-	if !ConditionWait(ctxMaster,
-		func() bool { return eventCounters.Up.NotZero() },
-		40*time.Second,
-		1*time.Second,
-	) {
+	if !ConditionWait(ctxMaster, eventCounters.Up.NotZero, 40*time.Second, 1*time.Second) {
 		t.Fatal("timeout waiting for connection to be ready")
 	}
 
@@ -284,9 +280,6 @@ func TestConsumerExclusive(t *testing.T) {
 		WithKey(QueueName).
 		WithContext(ctxMaster).
 		WithConfirmationsCount(chCapacity)
-		// TODO both these options fail... create dedicated publshing tests and fix
-		// WithConfirmationNoWait(true)
-		// WithImmediate(true)
 
 	publisher := NewPublisher(conn, optPub,
 		WithChannelOptionName("chan.publisher"),
@@ -337,7 +330,7 @@ func TestConsumerExclusive(t *testing.T) {
 	// }
 
 	// push all the messages
-	if _, err := PublishMsgBulk(publisher, optPub, MSG_COUNT, "exch.default"); err != nil {
+	if _, err := PublishMsgBulkOptions(publisher, optPub, MSG_COUNT, "exch.default"); err != nil {
 		t.Error(err)
 	}
 	if !ConditionWait(ctxMaster,
@@ -384,17 +377,6 @@ func TestConsumerOptions(t *testing.T) {
 	ARG["foo"] = "bar"
 
 	statusCh := make(chan Event, 16)
-
-	ctxMaster, ctxCancel := context.WithCancel(context.TODO())
-	defer ctxCancel()
-
-	eventCounters := &EventCounters{
-		Up:            &SafeCounter{},
-		MsgPublished:  &SafeCounter{},
-		DataExhausted: &SafeCounter{},
-		MsgReceived:   &SafeCounter{},
-	}
-	go procStatusEvents(ctxMaster, statusCh, eventCounters, &recoveringCallbackCounter)
 
 	validators := []trace.TraceValidator{
 		{
@@ -449,7 +431,16 @@ func TestConsumerOptions(t *testing.T) {
 			},
 		},
 	}
-	trace.ConsumeTraces(ctxMaster, validators)
+	ctxMaster, ctxCancel := trace.ConsumeTracesContext(validators)
+	defer ctxCancel()
+
+	eventCounters := &EventCounters{
+		Up:            &SafeCounter{},
+		MsgPublished:  &SafeCounter{},
+		DataExhausted: &SafeCounter{},
+		MsgReceived:   &SafeCounter{},
+	}
+	go procStatusEvents(ctxMaster, statusCh, eventCounters, &recoveringCallbackCounter)
 
 	conn := NewConnection(
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
@@ -507,7 +498,7 @@ func TestConsumerOptions(t *testing.T) {
 	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
 		t.Fatal("publisher not ready yet")
 	}
-	if _, err := PublishMsgBulk(publisher, optPub, MSG_COUNT, "exch.default"); err != nil {
+	if _, err := PublishMsgBulkOptions(publisher, optPub, MSG_COUNT, "exch.default"); err != nil {
 		t.Error(err)
 	}
 	if !ConditionWait(ctxMaster,
@@ -532,8 +523,9 @@ func TestConsumerOptions(t *testing.T) {
 	}
 
 	// parameters via API match the ones passed to the wrapped channel
-	if len(trace.ResultsCh) > 0 {
-		trace := <-trace.ResultsCh
+	resultsCh := ctxMaster.Value(trace.TraceChannelResultsName).(chan trace.ErrorTrace)
+	if len(resultsCh) > 0 {
+		trace := <-resultsCh
 		t.Errorf("Failed -> %v", trace.Err)
 	}
 

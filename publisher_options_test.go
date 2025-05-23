@@ -4,6 +4,11 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
+
+	trace "traceutils"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func TestDefaultPublisherOptions(t *testing.T) {
@@ -36,7 +41,7 @@ func TestDefaultPublisherOptions(t *testing.T) {
 	}
 }
 
-func TestPublisherOptions_Various(t *testing.T) {
+func TestPublisherOptionsSetters(t *testing.T) {
 	opt := DefaultPublisherOptions()
 
 	// ConfirmationNoWait
@@ -101,5 +106,111 @@ func TestPublisherOptions_Various(t *testing.T) {
 
 	if !reflect.DeepEqual(result, &opt) {
 		t.Errorf("DefaultPublisherOptions().result.pointer = %v, want %v", result, opt)
+	}
+}
+
+func TestPublisherOptions(t *testing.T) {
+	QueueName := "workload"
+	chCapacity := 32
+	MANDATORY := true
+	IMMEDIATE := true
+	EXCHANGE := "exchange"
+	KEY := "key"
+	statusCh := make(chan Event, chCapacity)
+
+	validators := []trace.TraceValidator{
+		{
+			Name: "PublishWithDeferredConfirmWithContext",
+			Tag:  QueueName,
+			Expectations: []trace.FieldExpectation{
+				{
+					Field: "Key",
+					Value: reflect.ValueOf(KEY),
+				},
+				{
+					Field: "Exchange",
+					Value: reflect.ValueOf(EXCHANGE),
+				},
+				{
+					Field: "Mandatory",
+					Value: reflect.ValueOf(MANDATORY),
+				},
+				{
+					Field: "Immediate",
+					Value: reflect.ValueOf(IMMEDIATE),
+				},
+			},
+		},
+	}
+	ctxMaster, ctxCancel := trace.ConsumeTracesContext(validators)
+	defer ctxCancel()
+
+	eventCounters := &EventCounters{
+		Up:           &SafeCounter{},
+		MsgPublished: &SafeCounter{},
+	}
+	go procStatusEvents(ctxMaster, statusCh, eventCounters, &recoveringCallbackCounter)
+
+	conn := NewConnection(
+		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
+		WithConnectionOptionContext(ctxMaster),
+		WithConnectionOptionNotification(statusCh),
+		WithConnectionOptionName("conn.main"),
+	)
+	// await connections which should have raised a series of events
+	if !ConditionWait(ctxMaster, eventCounters.Up.NotZero, 40*time.Second, 1*time.Second) {
+		t.Fatal("timeout waiting for connection to be ready")
+	}
+
+	topos := make([]*TopologyOptions, 0, 8)
+	topos = append(topos,
+		&TopologyOptions{
+			Name:       EXCHANGE,
+			Durable:    true,
+			Declare:    true,
+			IsExchange: true,
+		},
+		&TopologyOptions{
+			Name:    QueueName,
+			Durable: true,
+			Declare: true,
+			Bind: TopologyBind{
+				Enabled: true,
+				Key:     KEY,
+				Peer:    EXCHANGE,
+			},
+		},
+	)
+
+	// make a publisher + queues infra
+	optPub := DefaultPublisherOptions()
+	optPub.
+		WithKey(KEY).
+		WithExchange(EXCHANGE).
+		WithContext(ctxMaster).
+		WithConfirmationsCount(chCapacity).
+		// TODO both these options fail... create dedicated publshing tests and fix
+		// WithConfirmationNoWait(true)
+		WithImmediate(IMMEDIATE).
+		WithMandatory(MANDATORY)
+
+	publisher := NewPublisher(conn, optPub,
+		WithChannelOptionName("chan.publisher"),
+		WithChannelOptionNotification(statusCh),
+		WithChannelOptionTopology(topos),
+	)
+	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
+		t.Fatal("publisher not ready yet")
+	}
+
+	if _, err := PublishMsgBulk(publisher, 1, "test"); err != nil {
+		t.Error(err)
+	}
+
+	// parameters via API match the ones passed to the wrapped channel
+	resultsCh := ctxMaster.Value(trace.TraceChannelResultsName).(chan trace.ErrorTrace)
+	if len(resultsCh) > 0 {
+		trace := <-resultsCh
+		t.Errorf("Failed -> %v", trace.Err)
 	}
 }

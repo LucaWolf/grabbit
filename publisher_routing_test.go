@@ -12,7 +12,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-func PublishMsgBulk(pub *Publisher, opt PublisherOptions, records int, tag string) (int, error) {
+func PublishMsgBulkOptions(pub *Publisher, opt PublisherOptions, records int, tag string) (int, error) {
 	const CONF_DELAY = 7 * time.Second
 	ackCount := 0
 
@@ -28,6 +28,54 @@ func PublishMsgBulk(pub *Publisher, opt PublisherOptions, records int, tag strin
 		message.Body = buff.Bytes()
 
 		if conf, err := pub.PublishDeferredConfirmWithOptions(opt, message); err != nil {
+			return ackCount, err
+		} else {
+			confs[i] = conf
+		}
+	}
+	for i := 0; i < records; i++ {
+		conf := confs[i]
+
+		switch pub.AwaitDeferredConfirmation(conf, CONF_DELAY).Outcome {
+		case ConfirmationPrevious:
+			// log.Printf("\033[91mprevious\033[0m message confirmed request [%04X] vs.response [%04X]. TODO: keep waiting.\n",
+			// 	conf.RequestSequence, conf.DeliveryTag)
+		case ConfirmationDisabled:
+			return ackCount, errors.New("Not in confirmation mode (no DeferredConfirmation available)")
+		case ConfirmationACK:
+			// log.Printf("[%s][%s] \033[92m%s\033[0m with request [%04X] vs. response [%04X]\n",
+			// 	conf.ChannelName, conf.Queue, conf.Outcome, conf.RequestSequence, conf.DeliveryTag,
+			// )
+			ackCount++
+		case ConfirmationNAK:
+			// log.Printf("[%s][%s] \033[91m%s\033[0m with request [%04X] vs. response [%04X]\n",
+			// 	conf.ChannelName, conf.Queue, conf.Outcome, conf.RequestSequence, conf.DeliveryTag,
+			// )
+		default:
+			// log.Printf("[%s][%s] \033[93m%s\033[0m with request [%04X] vs. response [%04X]\n",
+			// 	conf.ChannelName, conf.Queue, conf.Outcome, conf.RequestSequence, conf.DeliveryTag,
+			// )
+		}
+	}
+	return ackCount, nil
+}
+
+func PublishMsgBulk(pub *Publisher, records int, tag string) (int, error) {
+	const CONF_DELAY = 7 * time.Second
+	ackCount := 0
+
+	message := amqp.Publishing{}
+	data := make([]byte, 0, 64)
+	buff := bytes.NewBuffer(data)
+
+	confs := make([]*DeferredConfirmation, records)
+
+	for i := 0; i < records; i++ {
+		buff.Reset()
+		buff.WriteString(fmt.Sprintf("data-%s-%04d", tag, i))
+		message.Body = buff.Bytes()
+
+		if conf, err := pub.PublishDeferredConfirm(message); err != nil {
 			return ackCount, err
 		} else {
 			confs[i] = conf
@@ -182,21 +230,21 @@ func TestPublisherRouting(t *testing.T) {
 	opt.WithExchange(EXCHANGE_LOGS).WithKey(KEY_ALERTS)
 
 	totalAckCount := 0
-	count, err := PublishMsgBulk(publisher, opt, 5, EXCHANGE_LOGS)
+	count, err := PublishMsgBulkOptions(publisher, opt, 5, EXCHANGE_LOGS)
 	if err != nil {
 		t.Error(err)
 	}
 	totalAckCount = totalAckCount + count
 	// via topic exchange: these should also end up on the QueueAlerts
 	opt.WithExchange(EXCHANGE_GATEWAY).WithKey("gw.alerts")
-	count, err = PublishMsgBulk(publisher, opt, 6, EXCHANGE_GATEWAY)
+	count, err = PublishMsgBulkOptions(publisher, opt, 6, EXCHANGE_GATEWAY)
 	if err != nil {
 		t.Error(err)
 	}
 	totalAckCount = totalAckCount + count
 	// via default gateway: straight onto the queue
 	opt.WithExchange("").WithKey(QUEUE_PAGERS)
-	count, err = PublishMsgBulk(publisher, opt, 7, "exch.default")
+	count, err = PublishMsgBulkOptions(publisher, opt, 7, "exch.default")
 	if err != nil {
 		t.Error(err)
 	}
@@ -204,21 +252,21 @@ func TestPublisherRouting(t *testing.T) {
 
 	// these should end up on the QueueInfo
 	opt.WithExchange(EXCHANGE_LOGS).WithKey(KEY_INFO)
-	count, err = PublishMsgBulk(publisher, opt, 5, EXCHANGE_LOGS)
+	count, err = PublishMsgBulkOptions(publisher, opt, 5, EXCHANGE_LOGS)
 	if err != nil {
 		t.Error(err)
 	}
 	totalAckCount = totalAckCount + count
 	// these should also end up on the QueueInfo
 	opt.WithExchange(EXCHANGE_GATEWAY).WithKey("gw.info")
-	count, err = PublishMsgBulk(publisher, opt, 4, EXCHANGE_GATEWAY)
+	count, err = PublishMsgBulkOptions(publisher, opt, 4, EXCHANGE_GATEWAY)
 	if err != nil {
 		t.Error(err)
 	}
 	totalAckCount = totalAckCount + count
 	// via default gateway: straight onto the queue
 	opt.WithExchange("").WithKey(QUEUE_EMAILS)
-	count, err = PublishMsgBulk(publisher, opt, 3, "exch.default")
+	count, err = PublishMsgBulkOptions(publisher, opt, 3, "exch.default")
 	if err != nil {
 		t.Error(err)
 	}

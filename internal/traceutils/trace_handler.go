@@ -33,25 +33,35 @@ type TraceValidator struct {
 	Expectations []FieldExpectation
 }
 
-var (
-	ParamsCh  chan ParamsTrace
-	ResultsCh chan ErrorTrace
+type TraceChannelName string
+
+const (
+	TraceChannelParamsName  = TraceChannelName("params_channel")
+	TraceChannelResultsName = TraceChannelName("results_channel")
 )
 
-// ConsumeTraces sets ParamsCh and ResultsCh and starts a ParamsTrace loop processing goroutine.
+// ConsumeTracesContext sets ParamsCh and ResultsCh and starts a ParamsTrace loop processing goroutine.
 // Call it directly from your tests without a 'go' wrapper.
-func ConsumeTraces(ctx context.Context, validators []TraceValidator) {
-	// wrapper setup to avoid race condition on channels initialization (read before write/make)
-	ParamsCh = make(chan ParamsTrace, 32)
-	ResultsCh = make(chan ErrorTrace, 32)
+func ConsumeTracesContext(validators []TraceValidator) (context.Context, context.CancelFunc) {
+	paramsCh := make(chan ParamsTrace, 32)
+	resultsCh := make(chan ErrorTrace, 32)
 
-	go doConsumeTraces(ctx, validators)
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, TraceChannelParamsName, paramsCh)
+	ctx = context.WithValue(ctx, TraceChannelResultsName, resultsCh)
+	ctxMaster, ctxCancel := context.WithCancel(ctx)
+
+	go doConsumeTraces(ctxMaster, validators)
+	return ctxMaster, ctxCancel
 }
 
 func doConsumeTraces(ctx context.Context, validators []TraceValidator) {
+	paramsCh := ctx.Value(TraceChannelParamsName).(chan ParamsTrace)
+	resultsCh := ctx.Value(TraceChannelResultsName).(chan ErrorTrace)
+
 	for {
 		select {
-		case trace := <-ParamsCh:
+		case trace := <-paramsCh:
 			var expected []FieldExpectation
 			for _, v := range validators {
 				if v.Name == trace.Name && v.Tag == trace.Tag {
@@ -63,7 +73,7 @@ func doConsumeTraces(ctx context.Context, validators []TraceValidator) {
 			for _, e := range expected {
 				param := params.FieldByName(e.Field)
 				if !param.IsValid() {
-					ResultsCh <- ErrorTrace{
+					resultsCh <- ErrorTrace{
 						Name: trace.Name,
 						Tag:  trace.Tag,
 						Err:  fmt.Errorf("field %s not found. Adjust your FieldExpectation(s)", e.Field),
@@ -73,7 +83,7 @@ func doConsumeTraces(ctx context.Context, validators []TraceValidator) {
 				// maps are not comparable and require special handling
 				if param.Kind() == reflect.Map {
 					if !reflect.DeepEqual(param.Interface(), e.Value.Interface()) {
-						ResultsCh <- ErrorTrace{
+						resultsCh <- ErrorTrace{
 							Name: trace.Name,
 							Tag:  trace.Tag,
 							Err: fmt.Errorf(
@@ -87,7 +97,7 @@ func doConsumeTraces(ctx context.Context, validators []TraceValidator) {
 					continue
 				}
 				if !param.Equal(e.Value) {
-					ResultsCh <- ErrorTrace{
+					resultsCh <- ErrorTrace{
 						Name: trace.Name,
 						Tag:  trace.Tag,
 						Err: fmt.Errorf(
