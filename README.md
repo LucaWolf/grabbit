@@ -6,6 +6,7 @@ Version 1.0.0 and beyond 🚀.<br>
 [![Go Reference](https://pkg.go.dev/badge/github.com/LucaWolf/grabbit.svg)](https://pkg.go.dev/github.com/LucaWolf/grabbit)
 [![Go Coverage](https://github.com/LucaWolf/grabbit/wiki/coverage.svg)](https://raw.githack.com/wiki/LucaWolf/grabbit/coverage.html)
 [![Go Report Card](https://goreportcard.com/badge/github.com/LucaWolf/grabbit)](https://goreportcard.com/report/github.com/LucaWolf/grabbit)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/LucaWolf/grabbit)
 
 ## Rationale
 This is an alternative library providing auto-reconnection support. It's been heavily inspired by other projects
@@ -15,7 +16,8 @@ diverge too much from the original and risk non-adoption.
 
 ## Usage
 Please use the [wiki](https://github.com/LucaWolf/grabbit/wiki#how-tos) page for a detailed list of how to get 
-the most out of this library.
+the most out of this library. We also have a DeepWiki page for the
+ [core concepts](https://deepwiki.com/LucaWolf/grabbit/2-core-components)'s architecture and more.
 
 ## Goals
 What I'd like this library to provide is:
