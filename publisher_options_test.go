@@ -189,11 +189,11 @@ func TestPublisherOptions(t *testing.T) {
 	ctxMaster, ctxCancel := trace.ConsumeTracesContext(validators)
 	defer ctxCancel()
 
-	eventCounters := &EventCounters{
+	chCounters := &EventCounters{
 		Up:           &SafeCounter{},
 		MsgPublished: &SafeCounter{},
 	}
-	go procStatusEvents(ctxMaster, statusCh, eventCounters, &recoveringCallbackCounter)
+	go procStatusEvents(ctxMaster, statusCh, chCounters, &recoveringCallbackCounter)
 
 	conn := NewConnection(
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
@@ -201,10 +201,12 @@ func TestPublisherOptions(t *testing.T) {
 		WithConnectionOptionNotification(statusCh),
 		WithConnectionOptionName("conn.main"),
 	)
-	// await connections which should have raised a series of events
-	if !ConditionWait(ctxMaster, eventCounters.Up.NotZero, 40*time.Second, 1*time.Second) {
-		t.Fatal("timeout waiting for connection to be ready")
-	}
+
+	// we want testing consumers/publishers reliability as soon as
+	// w/out any artificial delay induced by testing the connection up status (tested elsewhere)
+	// if !ConditionWait(ctxMaster, chCounters.Up.NotZero, DefaultPoll) {
+	// 	t.Fatal("timeout waiting for connection to be ready")
+	// }
 
 	topos := make([]*TopologyOptions, 0, 8)
 	topos = append(topos,

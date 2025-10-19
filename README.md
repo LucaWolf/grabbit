@@ -1,7 +1,7 @@
 # grabbit
 Golang wrapper for RabbitMQ managed connections.
 
-Version 1.0.0 and beyond 🚀.<br>
+Version 1.1.4 (requires Go 1.21 or above).<br>
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/LucaWolf/grabbit.svg)](https://pkg.go.dev/github.com/LucaWolf/grabbit)
 [![Go Coverage](https://github.com/LucaWolf/grabbit/wiki/coverage.svg)](https://raw.githack.com/wiki/LucaWolf/grabbit/coverage.html)

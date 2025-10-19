@@ -18,13 +18,12 @@ func TestNewConnection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	eventCounters := &EventCounters{
-		Up:       &SafeCounter{},
-		Down:     &SafeCounter{},
-		Closed:   &SafeCounter{},
-		Recovery: &SafeCounter{},
+	chCounters := &EventCounters{
+		Up:     &SafeCounter{},
+		Down:   &SafeCounter{},
+		Closed: &SafeCounter{},
 	}
-	go procStatusEvents(ctx, connStatusChan, eventCounters, &recoveringCallbackCounter)
+	go procStatusEvents(ctx, connStatusChan, chCounters, &recoveringCallbackCounter)
 
 	conn := NewConnection(
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
@@ -35,17 +34,17 @@ func TestNewConnection(t *testing.T) {
 		WithConnectionOptionNotification(connStatusChan),
 		WithConnectionOptionContext(ctx),
 	)
-	// await connection which should have raised a series of events
-	if !ConditionWait(ctx, eventCounters.Up.NotZero, 30*time.Second, time.Second) {
+	// connection is up
+	if !ConditionWait(ctx, chCounters.Up.NotZero, DefaultPoll) {
 		t.Fatal("timeout waiting for connection to be ready")
 	}
-	<-time.After(3 * time.Second)
+	<-time.After(1 * time.Second) // like some activity on the up connection
 
 	conn.Close()
-	if !ConditionWait(ctx, eventCounters.Down.NotZero, 5*time.Second, time.Second) {
+	if !ConditionWait(ctx, chCounters.Down.NotZero, ShortPoll) {
 		t.Error("timeout waiting for connection to be down")
 	}
-	if !ConditionWait(ctx, eventCounters.Closed.NotZero, 5*time.Second, time.Second) {
+	if !ConditionWait(ctx, chCounters.Closed.NotZero, ShortPoll) {
 		t.Error("timeout waiting for connection to be closed")
 	}
 
@@ -77,9 +76,7 @@ func TestConnectionDenyRecovery(t *testing.T) {
 	upCallbackCounter.Reset()
 	recoveringCallbackCounter.Reset()
 
-	delayer := &DefaultDelayer{
-		Value: 100 * time.Millisecond,
-	}
+	delayer := NewDefaultDelayer()
 
 	conn := NewConnection(
 		CONN_ADDR_RMQ_REJECT_PWD,
@@ -91,20 +88,13 @@ func TestConnectionDenyRecovery(t *testing.T) {
 		WithConnectionOptionDelay(delayer),
 		WithConnectionOptionContext(ctx),
 	)
-	if !ConditionWait(
-		ctx,
-		func() bool { return recoveringCallbackCounter.Value() > 3 },
-		30*time.Second, 200*time.Millisecond,
-	) {
+	if !ConditionWait(ctx, recoveringCallbackCounter.Greater(3), LongPoll) {
 		t.Fatal("timeout waiting for final recovery attempt")
 	}
 
 	if !conn.IsClosed() {
 		t.Error("connection should be initially closed")
 	}
-	// if recoveringCallbackCounter.Value() == 0 {
-	// 	t.Errorf("recoveringCallback expected some")
-	// }
 
 	// it never went up
 	if upCallbackCounter.Value() != 0 {
@@ -155,7 +145,7 @@ func TestConnectionDelayerCancelled(t *testing.T) {
 		WithConnectionOptionContext(ctx),
 	)
 	// await connection which should have raised a series of events
-	if !ConditionWait(ctx_conditions, recoveringCallbackCounter.NotZero, 30*time.Second, 200*time.Millisecond) {
+	if !ConditionWait(ctx_conditions, recoveringCallbackCounter.NotZero, LongPoll) {
 		t.Fatal("timeout waiting for connection to recover")
 	}
 
@@ -164,14 +154,10 @@ func TestConnectionDelayerCancelled(t *testing.T) {
 		t.Errorf("downCaupCallbackCounterllback expected %v, got %v", 0, upCallbackCounter.Value())
 	}
 
-	if !ConditionWait(ctx_conditions, conn.IsClosed, 7*time.Second, 200*time.Millisecond) {
+	if !ConditionWait(ctx_conditions, conn.IsClosed, DefaultPoll) {
 		t.Fatal("timeout waiting for connection to be shut-down")
 	}
-	if !ConditionWait(
-		ctx_conditions,
-		func() bool { return !conn.Connection().IsSet() },
-		7*time.Second,
-		200*time.Millisecond) {
+	if !ConditionWait(ctx_conditions, evtNot(conn.Connection().IsSet), DefaultPoll) {
 		t.Fatal("timeout waiting for connection to reset")
 	}
 	// can close several times w/out any repercussions
@@ -251,13 +237,12 @@ func TestConnectionCredentialProvider(t *testing.T) {
 
 	pwdCallbackCounter.Reset()
 
-	eventCounters := &EventCounters{
-		Up:       &SafeCounter{},
-		Down:     &SafeCounter{},
-		Closed:   &SafeCounter{},
-		Recovery: &SafeCounter{},
+	chCounters := &EventCounters{
+		Up:     &SafeCounter{},
+		Down:   &SafeCounter{},
+		Closed: &SafeCounter{},
 	}
-	go procStatusEvents(ctx, connStatusChan, eventCounters, nil)
+	go procStatusEvents(ctx, connStatusChan, chCounters, nil)
 
 	goodPwd := pwdProvider{
 		Value: "guest",
@@ -272,8 +257,8 @@ func TestConnectionCredentialProvider(t *testing.T) {
 		WithConnectionOptionNotification(connStatusChan),
 		WithConnectionOptionContext(ctx),
 	)
-	// await connection which should have raised a series of events
-	if !ConditionWait(ctx, eventCounters.Up.NotZero, 30*time.Second, time.Second) {
+	// connection is up
+	if !ConditionWait(ctx, chCounters.Up.NotZero, DefaultPoll) {
 		t.Fatal("timeout waiting for connection to be ready")
 	}
 

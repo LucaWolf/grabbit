@@ -22,16 +22,41 @@ type DelayProvider interface {
 	Delay(retry int) time.Duration
 }
 
-// DefaultDelayer allows defining a basic (constant) delay policy.
-// The implementation defaults used by new connections and channels
-// has a value of 7.5 seconds.
+// DefaultDelayer allows defining a basic exponential delay policy.
+// The implementation defaults to using NewDefaultDelayer
 type DefaultDelayer struct {
-	Value time.Duration
+	Value    time.Duration
+	RetryCap int
+}
+
+// NewDefaultDelayer creates a DefaultDelayer with base 200ms and retry cap of 7 attempts
+func NewDefaultDelayer() DefaultDelayer {
+	return DefaultDelayer{
+		Value:    200 * time.Millisecond,
+		RetryCap: 7,
+	}
 }
 
 // Delay implements the DelayProvider i/face for the DefaultDelayer.
 func (delayer DefaultDelayer) Delay(retry int) time.Duration {
-	return delayer.Value
+
+	retryCap := ClampInt(delayer.RetryCap, 7, 10)
+	attempt := ClampInt(retry, 1, retryCap)
+
+	// Exponential backoff with jitter
+	delay := time.Duration(int64(delayer.Value) * (1 << (attempt - 1)))
+	jitter := time.Duration(float64(delay) * 0.1) // 10% jitter
+	delay += time.Duration(random(int64(jitter)))
+
+	return delay
+}
+
+// random returns a non-negative pseudo-random number in [0,n).
+func random(n int64) int64 {
+	if n <= 0 {
+		return 0
+	}
+	return time.Now().UnixNano() % n
 }
 
 // CallbackWhenDown defines a function type used when connection was lost.

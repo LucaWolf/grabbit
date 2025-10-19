@@ -8,7 +8,6 @@ import (
 
 	trace "traceutils"
 
-	rabbithole "github.com/michaelklishin/rabbit-hole/v2"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -114,12 +113,12 @@ func TestBatchConsumer(t *testing.T) {
 	ctxMaster, ctxCancel := context.WithCancel(context.TODO())
 	defer ctxCancel() // 'goleak' would complain w/out final clean-up
 
-	eventCounters := &EventCounters{
+	chCounters := &EventCounters{
 		Up:            &SafeCounter{},
 		DataExhausted: &SafeCounter{},
 		MsgPublished:  &SafeCounter{},
 	}
-	go procStatusEvents(ctxMaster, statusCh, eventCounters, &recoveringCallbackCounter)
+	go procStatusEvents(ctxMaster, statusCh, chCounters, &recoveringCallbackCounter)
 
 	conn := NewConnection(
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
@@ -127,8 +126,8 @@ func TestBatchConsumer(t *testing.T) {
 		WithConnectionOptionNotification(statusCh),
 		WithConnectionOptionName("conn.main"),
 	)
-	// await connection which should have raised a series of events
-	if !ConditionWait(ctxMaster, eventCounters.Up.NotZero, 40*time.Second, time.Second) {
+	// connection is up
+	if !ConditionWait(ctxMaster, chCounters.Up.NotZero, DefaultPoll) {
 		t.Fatal("timeout waiting for connection to be ready")
 	}
 
@@ -151,23 +150,15 @@ func TestBatchConsumer(t *testing.T) {
 	)
 	defer publisher.Channel().QueueDelete(QueueName, false, false, true)
 
-	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
+	if !publisher.AwaitAvailable(LongPoll.Timeout, LongPoll.Frequency) {
 		t.Fatal("publisher not ready yet")
 	}
 	if _, err := PublishMsgBulkOptions(publisher, opt, MSG_COUNT, "exch.default"); err != nil {
 		t.Error(err)
 	}
-	if !ConditionWait(ctxMaster,
-		func() bool { return eventCounters.MsgPublished.Value() == MSG_COUNT },
-		15*time.Second, time.Second) {
-		t.Error("timeout pushing all the messages", eventCounters.MsgPublished.Value())
+	if !ConditionWait(ctxMaster, chCounters.MsgPublished.ValueEquals(MSG_COUNT), LongPoll) {
+		t.Error("timeout pushing all the messages", chCounters.MsgPublished.Value())
 	}
-	// what to kill for testing consumers recovery
-	rhClient, err := rabbithole.NewClient("http://127.0.0.1:15672", "guest", "guest")
-	if err != nil {
-		t.Error("rabbithole controller unavailable")
-	}
-	xs, _ := rhClient.ListConnections()
 
 	validate := make(chan DeliveryPayload, 300)
 
@@ -203,16 +194,11 @@ func TestBatchConsumer(t *testing.T) {
 	}
 
 	// sever the link some way through consuming
-	ConditionWait(
-		ctxMaster,
-		func() bool { return registry.Length() >= MSG_COUNT/4 },
-		30*time.Second, 30*time.Millisecond,
-	)
-	for _, x := range xs {
-		if _, err := rhClient.CloseConnection(x.Name); err != nil {
-			t.Error("rabbithole failed to close connection", err, " for: ", x.Name)
-		}
+	ConditionWait(ctxMaster, func() bool { return registry.Length() >= MSG_COUNT/4 }, LongVeryFrequentPoll)
+	if err := rmqc.killConnections(); err != nil {
+		t.Error(err)
 	}
+
 	// just to cover the code path of AwaitAvailable
 	for i, c := range consumers {
 		if !c.AwaitAvailable(30*time.Second, 1*time.Second) {
@@ -221,10 +207,8 @@ func TestBatchConsumer(t *testing.T) {
 	}
 
 	// ... and get all messages consumed (eventually)
-	if !ConditionWait(ctxMaster,
-		func() bool { return eventCounters.DataExhausted.Value() >= len(consumersAttr) },
-		30*time.Second, time.Second) {
-		t.Error("timeout waiting for all consumers to exhaust the queue", eventCounters.DataExhausted.Value())
+	if !ConditionWait(ctxMaster, chCounters.DataExhausted.GreaterEquals(len(consumersAttr)), LongPoll) {
+		t.Error("timeout waiting for all consumers to exhaust the queue", chCounters.DataExhausted.Value())
 	}
 
 	regLen := registry.Length()
@@ -243,12 +227,12 @@ func TestConsumerExclusive(t *testing.T) {
 	ctxMaster, ctxCancel := context.WithCancel(context.TODO())
 	defer ctxCancel()
 
-	eventCounters := &EventCounters{
+	chCounters := &EventCounters{
 		Up:            &SafeCounter{},
 		MsgPublished:  &SafeCounter{},
 		DataExhausted: &SafeCounter{},
 	}
-	go procStatusEvents(ctxMaster, statusCh, eventCounters, &recoveringCallbackCounter)
+	go procStatusEvents(ctxMaster, statusCh, chCounters, &recoveringCallbackCounter)
 
 	conn := NewConnection(
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
@@ -256,8 +240,8 @@ func TestConsumerExclusive(t *testing.T) {
 		WithConnectionOptionNotification(statusCh),
 		WithConnectionOptionName("conn.main"),
 	)
-	// await connections which should have raised a series of events
-	if !ConditionWait(ctxMaster, eventCounters.Up.NotZero, 40*time.Second, 1*time.Second) {
+	// connection is up
+	if !ConditionWait(ctxMaster, chCounters.Up.NotZero, DefaultPoll) {
 		t.Fatal("timeout waiting for connection to be ready")
 	}
 
@@ -330,17 +314,13 @@ func TestConsumerExclusive(t *testing.T) {
 	if _, err := PublishMsgBulkOptions(publisher, optPub, MSG_COUNT, "exch.default"); err != nil {
 		t.Error(err)
 	}
-	if !ConditionWait(ctxMaster,
-		func() bool { return eventCounters.MsgPublished.Value() == MSG_COUNT },
-		15*time.Second, time.Second) {
-		t.Error("timeout pushing all the messages", eventCounters.MsgPublished.Value())
+	if !ConditionWait(ctxMaster, chCounters.MsgPublished.ValueEquals(MSG_COUNT), LongPoll) {
+		t.Error("timeout pushing all the messages", chCounters.MsgPublished.Value())
 	}
 
 	// await full consumption
-	if !ConditionWait(ctxMaster,
-		func() bool { return eventCounters.DataExhausted.Value() >= 2 },
-		15*time.Second, time.Second) {
-		t.Error("timeout waiting for all consumers to exhaust the queue", eventCounters.DataExhausted.Value())
+	if !ConditionWait(ctxMaster, chCounters.DataExhausted.GreaterEquals(2), LongPoll) {
+		t.Error("timeout waiting for all consumers to exhaust the queue", chCounters.DataExhausted.Value())
 	}
 
 	// Validate the counters: only alpha  should bump the countAck
@@ -431,13 +411,13 @@ func TestConsumerOptions(t *testing.T) {
 	ctxMaster, ctxCancel := trace.ConsumeTracesContext(validators)
 	defer ctxCancel()
 
-	eventCounters := &EventCounters{
+	chCounters := &EventCounters{
 		Up:            &SafeCounter{},
 		MsgPublished:  &SafeCounter{},
 		DataExhausted: &SafeCounter{},
 		MsgReceived:   &SafeCounter{},
 	}
-	go procStatusEvents(ctxMaster, statusCh, eventCounters, &recoveringCallbackCounter)
+	go procStatusEvents(ctxMaster, statusCh, chCounters, &recoveringCallbackCounter)
 
 	conn := NewConnection(
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
@@ -445,10 +425,12 @@ func TestConsumerOptions(t *testing.T) {
 		WithConnectionOptionNotification(statusCh),
 		WithConnectionOptionName("conn.main"),
 	)
-	// await connection which should have raised a series of events
-	if !ConditionWait(ctxMaster, eventCounters.Up.NotZero, 40*time.Second, time.Second) {
-		t.Fatal("timeout waiting for connection to be ready")
-	}
+
+	// we want testing consumers/publishers reliability as soon as
+	// w/out any artificial delay induced by testing the connection up status (tested elsewhere)
+	// if !ConditionWait(ctxMaster, chCounters.Up.NotZero, DefaultPoll) {
+	// 	t.Fatal("timeout waiting for connection to be ready")
+	// }
 
 	topos := make([]*TopologyOptions, 0, 8)
 	topos = append(topos, &TopologyOptions{
@@ -500,25 +482,19 @@ func TestConsumerOptions(t *testing.T) {
 	if _, err := PublishMsgBulkOptions(publisher, optPub, MSG_COUNT, "exch.default"); err != nil {
 		t.Error(err)
 	}
-	if !ConditionWait(ctxMaster,
-		func() bool { return eventCounters.MsgPublished.Value() == MSG_COUNT },
-		15*time.Second, time.Second) {
-		t.Error("timeout pushing all the messages", eventCounters.MsgPublished.Value())
+	if !ConditionWait(ctxMaster, chCounters.MsgPublished.ValueEquals(MSG_COUNT), LongPoll) {
+		t.Error("timeout pushing all the messages", chCounters.MsgPublished.Value())
 	}
 
 	// data comes through
 	ceilReceivedCount := (MSG_COUNT + PREFETCH_COUNT - 1) / PREFETCH_COUNT
-	if !ConditionWait(ctxMaster,
-		func() bool { return eventCounters.MsgReceived.Value() >= ceilReceivedCount/2 },
-		15*time.Second, time.Second) {
-		t.Error("timeout waiting data", eventCounters.MsgReceived.Value())
+	if !ConditionWait(ctxMaster, chCounters.MsgReceived.GreaterEquals(ceilReceivedCount/2), LongPoll) {
+		t.Error("timeout waiting data", chCounters.MsgReceived.Value())
 	}
 
 	// await full consumption
-	if !ConditionWait(ctxMaster,
-		func() bool { return eventCounters.DataExhausted.Value() >= 1 },
-		7*time.Second, time.Second) {
-		t.Error("timeout waiting for consumer to exhaust the queue", eventCounters.DataExhausted.Value())
+	if !ConditionWait(ctxMaster, chCounters.DataExhausted.GreaterEquals(1), DefaultPoll) {
+		t.Error("timeout waiting for consumer to exhaust the queue", chCounters.DataExhausted.Value())
 	}
 
 	// parameters via API match the ones passed to the wrapped channel

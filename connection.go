@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"time"
 
+	"notifiers"
+
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -13,10 +15,11 @@ import (
 // (impl. details: rabbit URL, [ConnectionOptions] and a cancelling context).
 // Applications should obtain a connection using [NewConnection].
 type Connection struct {
-	baseConn SafeBaseConn      // supporting amqp connection
-	address  string            // where to connect
-	blocked  SafeBool          // TCP stream status
-	opt      ConnectionOptions // user parameters
+	baseConn  SafeBaseConn            // supporting amqp connection
+	address   string                  // where to connect
+	blocked   SafeBool                // TCP stream status
+	opt       ConnectionOptions       // user parameters
+	connected notifiers.SafeNotifiers // safe notifiers
 }
 
 // NewConnection creates a new managed Connection object with the given address, configuration, and option functions.
@@ -42,21 +45,20 @@ func NewConnection(address string, config amqp.Config, optionFuncs ...func(*Conn
 	opt := ConnectionOptions{
 		notifier: make(chan Event),
 		name:     "default",
-		delayer:  DefaultDelayer{Value: 7500 * time.Millisecond},
+		delayer:  NewDefaultDelayer(),
 		ctx:      context.Background(),
 	}
-
 	for _, optionFunc := range optionFuncs {
 		optionFunc(&opt)
 	}
+	opt.ctx, opt.cancelCtx = context.WithCancel(opt.ctx)
 
 	conn := &Connection{
-		baseConn: SafeBaseConn{},
-		address:  address,
-		opt:      opt,
+		baseConn:  SafeBaseConn{},
+		address:   address,
+		opt:       opt,
+		connected: notifiers.NewSafeNotifiers(),
 	}
-
-	conn.opt.ctx, conn.opt.cancelCtx = context.WithCancel(opt.ctx)
 
 	go func() {
 		if !conn.reconnectLoop(config) {
@@ -188,6 +190,7 @@ func (conn *Connection) manage(config amqp.Config) {
 // Returns:
 //   - a boolean indicating if the recovery was successful.
 func (conn *Connection) recover(config amqp.Config, err OptionalError, notifierStatus bool) bool {
+	conn.connected.Reset()
 	Event{
 		SourceType: CliConnection,
 		SourceName: conn.opt.name,
@@ -232,6 +235,7 @@ func (conn *Connection) rebase(config amqp.Config) bool {
 		result = false
 	} else {
 		conn.baseConn.set(super)
+		conn.connected.Broadcast()
 	}
 
 	Event{
@@ -265,4 +269,11 @@ func (conn *Connection) reconnectLoop(config amqp.Config) bool {
 			return false
 		}
 	}
+}
+
+// RecoveryNotifier returns a channel that will emit the current recovery version
+// each time the connection recovers. Consumers can use this to compare with their
+// previously known version to detect connection recovery.
+func (conn *Connection) RecoveryNotifier() *notifiers.SafeNotifiers {
+	return &conn.connected
 }

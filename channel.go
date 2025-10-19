@@ -52,18 +52,16 @@ func NewChannel(conn *Connection, optionFuncs ...func(*ChannelOptions)) *Channel
 		cbProcessMessages: defaultPayloadProcessor,
 		ctx:               conn.opt.ctx,
 	}
-
 	for _, optionFunc := range optionFuncs {
 		optionFunc(opt)
 	}
+	opt.ctx, opt.cancelCtx = context.WithCancel(opt.ctx)
 
 	ch := &Channel{
 		baseChan: SafeBaseChan{},
 		opt:      *opt,
 		conn:     conn,
 	}
-
-	ch.opt.ctx, ch.opt.cancelCtx = context.WithCancel(opt.ctx)
 
 	go func() {
 		if !ch.reconnectLoop(false) {
@@ -193,10 +191,23 @@ func (ch *Channel) recover(err OptionalError, notifierStatus bool) bool {
 //
 // It takes a pointer to a Channel struct as a parameter.
 // It returns a boolean value.
-func (ch *Channel) rebase() bool {
+func (ch *Channel) rebase(retry int) bool {
 	kind := EventUp
 	result := true
 	optError := OptionalError{}
+
+	connStatus := ch.conn.RecoveryNotifier()
+
+	connected := connStatus.AwaitFor(ch.opt.delayer.Delay(retry))
+	if !connected {
+		Event{
+			SourceType: CliChannel,
+			SourceName: ch.opt.name,
+			Kind:       EventCannotEstablish,
+			Err:        SomeErrFromString("connection recovery timeout"),
+		}.raise(ch.opt.notifier)
+		return false
+	}
 
 	if super, err := ch.conn.Channel(); err != nil {
 		kind = EventCannotEstablish
@@ -219,7 +230,7 @@ func (ch *Channel) rebase() bool {
 
 // reconnectLoop is a function that performs a reconnection loop for a given channel.
 //
-// It takes a *Channel pointer as its parameter, which represents the channel to reconnect, and a boolean
+// It takes a pointer to a Channel as its parameter, which represents the channel to reconnect, and a boolean
 // value indicating whether the channel is recovering.
 //
 // The function returns a boolean value, which indicates whether the reconnection loop was successful or not.
@@ -232,13 +243,13 @@ func (ch *Channel) reconnectLoop(recovering bool) bool {
 			return false
 		}
 
-		if ch.rebase() {
+		if ch.rebase(retry) {
 			// cannot decide (yet) which infra is critical, let the caller decide via the raised events
 			ch.makeTopology(recovering)
 			return true
 		}
-		// context cancelled
-		if !delayerCompleted(ch.opt.ctx, ch.opt.delayer, retry) {
+		// context cancelled; minimum timer as we already waited the connection up in rebase
+		if !delayerCompleted(ch.opt.ctx, ch.opt.delayer, 1) {
 			return false
 		}
 	}

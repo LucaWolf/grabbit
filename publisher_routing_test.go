@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	rabbithole "github.com/michaelklishin/rabbit-hole/v2"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -209,10 +208,9 @@ func TestPublisherRouting(t *testing.T) {
 
 	statusCh := make(chan Event, 10)
 	chCounters := &EventCounters{
-		Up:       &SafeCounter{},
-		Down:     &SafeCounter{},
-		Closed:   &SafeCounter{},
-		Recovery: &SafeCounter{},
+		Up:     &SafeCounter{},
+		Down:   &SafeCounter{},
+		Closed: &SafeCounter{},
 	}
 	go procStatusEvents(ctxMaster, statusCh, chCounters, nil)
 
@@ -293,12 +291,8 @@ func TestPublisherRouting(t *testing.T) {
 	if totalReadyCounter.Value() != 30 {
 		t.Errorf("expecting 30 messages total sent, got %d", totalReadyCounter.Value())
 	}
-	rhClient, err := rabbithole.NewClient("http://127.0.0.1:15672", "guest", "guest")
-	if err != nil {
-		t.Error("rabbithole controller unavailable")
-	}
 
-	qPagers, err := rhClient.GetQueue("/", QUEUE_PAGERS)
+	qPagers, err := rmqc.Cli.GetQueue("/", QUEUE_PAGERS)
 	if err != nil {
 		t.Errorf("rabbithole cannot get queue %s details %v", QUEUE_PAGERS, err)
 	}
@@ -306,7 +300,7 @@ func TestPublisherRouting(t *testing.T) {
 		t.Errorf("expecting 18 messages on %s, got %v", QUEUE_PAGERS, qPagers.Messages)
 	}
 	// 3. in QUEUE_EMAILS
-	qEmails, err := rhClient.GetQueue("/", QUEUE_EMAILS)
+	qEmails, err := rmqc.Cli.GetQueue("/", QUEUE_EMAILS)
 	if err != nil {
 		t.Errorf("rabbithole cannot get queue %s details %v", QUEUE_EMAILS, err)
 	}

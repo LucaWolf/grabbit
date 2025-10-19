@@ -1,6 +1,6 @@
 module pub_deferred_confirm
 
-go 1.20
+go 1.21
 
 require (
 	github.com/LucaWolf/grabbit v0.0.0-20221102051845-2eb228c3ab34

@@ -2,39 +2,12 @@ package grabbit
 
 import (
 	"context"
-	"fmt"
+	"log"
 	"testing"
 	"time"
 
-	rabbithole "github.com/michaelklishin/rabbit-hole/v2"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
-
-func expectQueue(cli *rabbithole.Client, name string) error {
-	qs, err := cli.ListQueues()
-	if err != nil {
-		return err
-	}
-	for _, q := range qs {
-		if q.Name == name {
-			return nil
-		}
-	}
-	return fmt.Errorf("queue %s not found", name)
-}
-
-func expectExchange(cli *rabbithole.Client, name string) error {
-	es, err := cli.ListExchanges()
-	if err != nil {
-		return err
-	}
-	for _, e := range es {
-		if e.Name == name {
-			return nil
-		}
-	}
-	return fmt.Errorf("exchange %s not found", name)
-}
 
 // TestChannelTopology tests that topologies are re-created after the current channel is recovered
 func TestChannelTopology(t *testing.T) {
@@ -50,6 +23,7 @@ func TestChannelTopology(t *testing.T) {
 	recoveringCallbackCounter.Reset()
 	delayerCallbackCounter.Reset()
 
+	// has no notifications ch consumer.
 	conn := NewConnection(
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
 		WithConnectionOptionName("test.ctx"),
@@ -96,12 +70,17 @@ func TestChannelTopology(t *testing.T) {
 
 	// events accounting
 	chCounters := &EventCounters{
-		Up:       &SafeCounter{},
-		Down:     &SafeCounter{},
-		Closed:   &SafeCounter{},
-		Recovery: &SafeCounter{},
+		Up:          &SafeCounter{},
+		Down:        &SafeCounter{},
+		Closed:      &SafeCounter{},
+		BadRecovery: &SafeCounter{},
+		Topology:    &SafeCounter{},
 	}
+	// do not count connection statistics further down this test in validations
+	// all counters are channels related only
 	go procStatusEvents(ctx, statusCh, chCounters, nil)
+
+	minimalDelayer := tracingDelayer{Value: ShortPoll.Timeout}
 	// create the test channel
 	testCh := NewChannel(conn,
 		WithChannelOptionContext(ctx),
@@ -112,32 +91,30 @@ func TestChannelTopology(t *testing.T) {
 		WithChannelOptionDown(connDownCB),
 		WithChannelOptionUp(connUpCB),
 		WithChannelOptionRecovering(connReconnectCB),
-		WithChannelOptionDelay(tracingDelayer{Value: time.Second}),
+		WithChannelOptionDelay(minimalDelayer),
 	)
 	defer testCh.ExchangeDelete(EXCHANGE_NOTIFICATIONS, false, true)
 	defer testCh.QueueDelete(QUEUE_EMAILS, false, false, true)
 	defer testCh.QueueDelete(QUEUE_PAGERS, false, false, true)
 
-	// channel setup takes a while (we don't wait here for connection completion)
-	// so it will trigger quite a few "recovery" and "delayer" callbacks
-	if !ConditionWait(ctx, recoveringCallbackCounter.NotZero, 3*time.Second, 0) {
+	// current version of channel recovery awaits connection's signaling completion before
+	// redoing the RMQ channel, subject to its delayer (minimalDelayer in this case)
+	// So no longer getting EventCannotEstablish even for minimum delayers
+	// nonetheless, various callbacks still execute.
+	if !ConditionWait(ctx, recoveringCallbackCounter.NotZero, DefaultPoll) {
 		t.Fatal("timeout waiting for channel to setup/recovery event")
 	}
 
-	// link-up
-	if !ConditionWait(ctx, chCounters.Up.NotZero, 30*time.Second, 0) {
-		t.Fatal("timeout waiting for channel to be ready")
+	// channel is up
+	if !ConditionWait(ctx, chCounters.Up.ValueEquals(1), DefaultPoll) {
+		t.Fatal("timeout waiting for channel to be ready", chCounters.Up.Value())
 	}
-	if !ConditionWait(ctx, upCallbackCounter.NotZero, 3*time.Second, 0) {
+	if !ConditionWait(ctx, upCallbackCounter.NotZero, DefaultPoll) {
 		t.Fatal("timeout waiting for channel to be ready (cb)")
 	}
 
 	// there should be no unrequested hiccups on the channel
-	if ConditionWait(
-		ctx,
-		func() bool { return chCounters.Down.NotZero() || chCounters.Closed.NotZero() },
-		3*time.Second,
-		0) {
+	if ConditionWait(ctx, evtAny(chCounters.Down.NotZero, chCounters.Closed.NotZero), ShortPoll) {
 		t.Error("channel went down/closed unexpectedly")
 	}
 
@@ -174,71 +151,70 @@ func TestChannelTopology(t *testing.T) {
 	// no errors mean the queue parameters match our topology.
 	// on error QueueDeclarePassive() throws and kills your channel
 
-	// List queues by alternative means
-	rhClient, err := rabbithole.NewClient("http://127.0.0.1:15672", "guest", "guest")
-	if err != nil {
-		t.Error("rabbithole controller unavailable")
-	}
-
 	// initial setup - ephemeral exchanges and queues
-	if err := expectQueue(rhClient, QUEUE_EMAILS); err != nil {
+	if err := rmqc.expectQueue(QUEUE_EMAILS); err != nil {
 		t.Error("rabbithole failed to list queue:", err, QUEUE_EMAILS)
 	}
-	if err := expectQueue(rhClient, QUEUE_PAGERS); err != nil {
+	if err := rmqc.expectQueue(QUEUE_PAGERS); err != nil {
 		t.Error("rabbithole failed to list queue:", err, QUEUE_PAGERS)
 	}
-	if err := expectExchange(rhClient, EXCHANGE_NOTIFICATIONS); err != nil {
+	if err := rmqc.expectExchange(EXCHANGE_NOTIFICATIONS); err != nil {
 		t.Error("rabbithole failed to list exchange:", err, EXCHANGE_NOTIFICATIONS)
 	}
 
 	// Forcefully close test specific connection
 	upCounterBefore := chCounters.Up.Value()
 	upCallbackCounterBefore := upCallbackCounter.Value()
-	recoveryCountBefore := chCounters.Recovery.Value()
+	badRecoveryCountBefore := chCounters.BadRecovery.Value()
 	delayerCallbackCounterBefore := delayerCallbackCounter.Value()
+	topologyCountBefore := chCounters.Topology.Value()
 
-	xs, _ := rhClient.ListConnections()
-	for _, x := range xs {
-		if _, err := rhClient.CloseConnection(x.Name); err != nil {
-			t.Error("rabbithole failed to close connection", err, " for: ", x.Name)
-		}
+	if err := rmqc.killConnections(); err != nil {
+		t.Error(err)
 	}
+	tConnectionKill := time.Now()
 
 	// test the grabbit connection and queue have recovered after a while
-	if !ConditionWait(ctx, chCounters.Down.NotZero, 30*time.Second, 0) {
+	if !ConditionWait(ctx, chCounters.Down.ValueEquals(1), ShortPoll) {
 		t.Error("timeout waiting for channel to go down")
 	}
-	if !ConditionWait(ctx, downCallbackCounter.NotZero, 3*time.Second, 0) {
+	log.Println("INFO: channel reported DOWN after", time.Since(tConnectionKill))
+
+	if !ConditionWait(ctx, downCallbackCounter.NotZero, ShortPoll) {
 		t.Error("timeout waiting for channel to go down (cb)")
 	}
 
 	// Note: EventClosed is only expected when we cleanly close the channel.
 	// We would have got one for the connection though... but have not used a procStatusEvents for that.
 
-	if !ConditionWait(ctx, func() bool { return chCounters.Up.Value() > upCounterBefore }, 30*time.Second, 0) {
+	if !ConditionWait(ctx, chCounters.Up.Greater(upCounterBefore), DefaultPoll) {
 		t.Error("expecting Up count to increase")
 	}
-	if !ConditionWait(ctx, func() bool { return upCallbackCounter.Value() > upCallbackCounterBefore }, 3*time.Second, 0) {
+	log.Println("INFO: channel reported UP after", time.Since(tConnectionKill))
+	if !ConditionWait(ctx, upCallbackCounter.Greater(upCallbackCounterBefore), ShortPoll) {
 		t.Error("expecting Up count to increase (cb)")
 	}
 
-	// since we killed the connection and re-establishing usually takes a while,
-	// we expect the channel recovery to fail initially... so an increasing counter
-	if !ConditionWait(ctx, func() bool { return chCounters.Recovery.Value() > recoveryCountBefore }, 30*time.Second, 0) {
-		t.Error("expecting Recovery count to increase")
+	// current version of channel recovery awaits connection's signaling completion before redoing the RMQ channel
+	// so no longer getting EventCannotEstablish even for minimum delayers
+	if ConditionWait(ctx, chCounters.BadRecovery.Greater(badRecoveryCountBefore), ShortPoll) {
+		t.Error("expecting failed recovery count to maintain")
 	}
-	if !ConditionWait(ctx, func() bool { return delayerCallbackCounter.Value() > delayerCallbackCounterBefore }, 30*time.Second, 0) {
+	if !ConditionWait(ctx, delayerCallbackCounter.Greater(delayerCallbackCounterBefore), DefaultPoll) {
 		t.Error("expecting Recovery count to increase (cb)")
+	}
+	if !ConditionWait(ctx, chCounters.Topology.Greater(topologyCountBefore), DefaultPoll) {
+		t.Error("expecting topolgy declaration count to increase")
 	}
 
 	// fianal setup
-	if err := expectQueue(rhClient, QUEUE_EMAILS); err != nil {
+	if err := rmqc.expectQueue(QUEUE_EMAILS); err != nil {
 		t.Error("rabbithole failed to list queue:", err, QUEUE_EMAILS)
 	}
-	if err := expectQueue(rhClient, QUEUE_PAGERS); err != nil {
+	if err := rmqc.expectQueue(QUEUE_PAGERS); err != nil {
 		t.Error("rabbithole failed to list queue:", err, QUEUE_PAGERS)
 	}
-	if err := expectExchange(rhClient, EXCHANGE_NOTIFICATIONS); err != nil {
+	if err := rmqc.expectExchange(EXCHANGE_NOTIFICATIONS); err != nil {
 		t.Error("rabbithole failed to list exchange:", err, EXCHANGE_NOTIFICATIONS)
 	}
 }

@@ -29,18 +29,16 @@ func TestContextCancellation(t *testing.T) {
 
 	// events accounting
 	alphaEventCounters := &EventCounters{
-		Up:       &SafeCounter{},
-		Down:     &SafeCounter{},
-		Closed:   &SafeCounter{},
-		Recovery: &SafeCounter{},
+		Up:     &SafeCounter{},
+		Down:   &SafeCounter{},
+		Closed: &SafeCounter{},
 	}
 	go procStatusEvents(ctxAlpha, alphaStatusChan, alphaEventCounters, nil)
 
 	betaEventCounters := &EventCounters{
-		Up:       &SafeCounter{},
-		Down:     &SafeCounter{},
-		Closed:   &SafeCounter{},
-		Recovery: &SafeCounter{},
+		Up:     &SafeCounter{},
+		Down:   &SafeCounter{},
+		Closed: &SafeCounter{},
 	}
 	go procStatusEvents(ctxBeta, betaStatusChan, betaEventCounters, nil)
 	// create two independent channels; expect their inner contexts to become decoupled
@@ -55,10 +53,10 @@ func TestContextCancellation(t *testing.T) {
 		WithChannelOptionNotification(betaStatusChan),
 	)
 
-	if !ConditionWait(ctxAlpha, alphaEventCounters.Up.NotZero, 30*time.Second, 0) {
+	if !ConditionWait(ctxAlpha, alphaEventCounters.Up.NotZero, DefaultPoll) {
 		t.Fatal("timeout waiting for Alpha connection to be ready")
 	}
-	if !ConditionWait(ctxBeta, betaEventCounters.Up.NotZero, 30*time.Second, 0) {
+	if !ConditionWait(ctxBeta, betaEventCounters.Up.NotZero, DefaultPoll) {
 		t.Fatal("timeout waiting for Beta connection to be ready")
 	}
 	<-time.After(1 * time.Second)
@@ -66,7 +64,7 @@ func TestContextCancellation(t *testing.T) {
 		t.Error("Alpha connection went down/closed unexpectedly")
 	}
 	if betaEventCounters.Down.NotZero() || betaEventCounters.Closed.NotZero() {
-		t.Error("Alpha connection went down/closed unexpectedly")
+		t.Error("Beta connection went down/closed unexpectedly")
 	}
 
 	// closing alphaCh should not close betaCh even though beta's context has been initiated from alpha's.
@@ -77,17 +75,17 @@ func TestContextCancellation(t *testing.T) {
 	if err := alphaCh.Close(); err != nil {
 		t.Errorf("Channel alpha closing.0 failed with = %v", err)
 	}
-	if !ConditionWait(ctxAlpha, alphaEventCounters.Down.NotZero, 7*time.Second, time.Second) {
+	if !ConditionWait(ctxAlpha, alphaEventCounters.Down.NotZero, DefaultPoll) {
 		t.Error("alphaCh should have been closed by now:", alphaEventCounters.Down.Value())
 	}
-	if ConditionWait(ctxBeta, betaEventCounters.Down.NotZero, 3*time.Second, 500*time.Millisecond) {
+	if ConditionWait(ctxBeta, betaEventCounters.Down.NotZero, ShortPoll) {
 		t.Error("betaCh should still be open")
 	}
 
 	// but closing the parent ctxAlpha context should induce beta to shut-down
 	ctxAlphaCancel()
 	// Reminder: sudden death via ctx cancellation _might_ not provide any Down/Closed feedback
-	if !ConditionWait(context.TODO(), betaCh.IsClosed, 7*time.Second, time.Second) {
+	if !ConditionWait(context.TODO(), betaCh.IsClosed, DefaultPoll) {
 		t.Error("betaCh should have been closed by now: ", betaEventCounters.Down.Value())
 	}
 
