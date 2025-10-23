@@ -16,29 +16,33 @@ import (
 type Connection struct {
 	baseConn  SafeBaseConn         // supporting amqp connection
 	address   string               // where to connect
-	blocked   SafeBool             // TCP stream status
+	blocked   latch.NotifyingLatch // TCP stream status
 	opt       ConnectionOptions    // user parameters
-	connected latch.NotifyingLatch // safe notifiers
-	active    latch.NotifyingLatch // managing goroutine status
+	connected latch.NotifyingLatch // establishment internally tracked status
+	managed   latch.NotifyingLatch // managing goroutine status
 }
 
-// RecoveryNotifier returns a channel that will emit the current recovery status
-// each time the connection recovers.
-func (conn *Connection) RecoveryNotifier() *latch.NotifyingLatch {
-	return &conn.connected
+// AwaitManager waits till the managing goroutine is in the desired state or timeout expires.
+// Provided as a helper tool to confirm the lifespan of the Connection has expired
+// (no goroutine leak) when closed and not usually called from the user application layer.
+func (conn *Connection) AwaitManager(active bool, timeout time.Duration) bool {
+	return awaitOnLatch(&conn.managed, conn.opt.ctx, active, timeout)
 }
 
-func (conn *Connection) ManagerNotifier() *latch.NotifyingLatch {
-	return &conn.active
-}
-
-// AwaitAvailable waits till the connection is establised or timeout expires.
+// AwaitAvailable waits till the connection is established or timeout expires.
+//
+// Deprecated: replaced by AwaitStatus.
 func (conn *Connection) AwaitAvailable(timeout time.Duration) bool {
-	if timeout == 0 {
-		timeout = 7500 * time.Millisecond
-	}
+	return conn.AwaitStatus(true, timeout)
+}
 
-	return conn.connected.Wait(conn.opt.ctx, false, timeout)
+// AwaitStatus waits till the connection is in the desired state or timeout expires.
+// Pass 'true' for testing open/ready, 'false' for testing if closed.
+//
+// This is a bit safer than [IsClosed] method since it tracks an internal state that
+// flow wraps (after) the base amqp.Connection status change.
+func (conn *Connection) AwaitStatus(connected bool, timeout time.Duration) bool {
+	return awaitOnLatch(&conn.connected, conn.opt.ctx, connected, timeout)
 }
 
 // NewConnection creates a new managed Connection object with the given address, configuration, and option functions.
@@ -77,7 +81,8 @@ func NewConnection(address string, config amqp.Config, optionFuncs ...func(*Conn
 		address:   address,
 		opt:       opt,
 		connected: latch.NewLatch(true, opt.name),
-		active:    latch.NewLatch(true, opt.name),
+		managed:   latch.NewLatch(true, opt.name),
+		blocked:   latch.NewLatch(false, opt.name),
 	}
 
 	// overwrite the connection name
@@ -89,8 +94,8 @@ func NewConnection(address string, config amqp.Config, optionFuncs ...func(*Conn
 	}
 
 	go func() {
-		conn.active.Unlock()
-		defer conn.active.Lock()
+		conn.managed.Unlock()
+		defer conn.managed.Lock()
 
 		if !conn.reconnectLoop(config) {
 			// initial connection may fail after rmq established;
@@ -120,23 +125,21 @@ func NewConnection(address string, config amqp.Config, optionFuncs ...func(*Conn
 //
 // The function does not return anything.
 func (conn *Connection) setFlow(value amqp.Blocking) {
-	conn.blocked.mu.Lock()
-	conn.blocked.value = value.Active
-	conn.blocked.mu.Unlock()
-
-	var kind EventType
-	if value.Active {
-		kind = EventBlocked
-	} else {
-		kind = EventUnBlocked
-	}
-
-	Event{
+	evt := Event{
 		SourceType: CliConnection,
 		SourceName: conn.opt.name,
-		Kind:       kind,
-		Err:        SomeErrFromString(value.Reason),
-	}.raise(conn.opt.notifier)
+		Kind:       EventUnBlocked,
+	}
+
+	if value.Active {
+		evt.Kind = EventBlocked
+		evt.Err = SomeErrFromString(value.Reason)
+		conn.blocked.Lock()
+	} else {
+		conn.blocked.Unlock()
+	}
+
+	evt.raise(conn.opt.notifier)
 }
 
 // refreshCredentials refreshes the credentials of the Connection.
@@ -216,11 +219,12 @@ func (conn *Connection) manage(config amqp.Config) {
 			case status := <-evtBlocked:
 				conn.setFlow(status)
 			case err, notifierStatus := <-evtClosed:
+				conn.baseConn.reset() // ASAP
+				conn.connected.Lock() // ASAP
 				if !conn.recover(config, SomeErrFromError(err, err != nil), notifierStatus) {
 					return
 				}
 				recovering = true
-
 			// avoid a hot loop
 			case <-time.After(120 * time.Second):
 				innerLoop = true
@@ -247,7 +251,6 @@ func (conn *Connection) manage(config amqp.Config) {
 // Returns:
 //   - a boolean indicating if the recovery was successful.
 func (conn *Connection) recover(config amqp.Config, err OptionalError, notifierStatus bool) bool {
-	conn.connected.Lock()
 	Event{
 		SourceType: CliConnection,
 		SourceName: conn.opt.name,
@@ -260,8 +263,6 @@ func (conn *Connection) recover(config amqp.Config, err OptionalError, notifierS
 	}
 
 	if !notifierStatus {
-		conn.baseConn.reset()
-
 		Event{
 			SourceType: CliConnection,
 			SourceName: conn.opt.name,

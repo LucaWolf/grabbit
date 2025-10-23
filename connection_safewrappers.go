@@ -6,10 +6,7 @@ import (
 
 // IsBlocked returns the TCP flow status of the base connection.
 func (conn *Connection) IsBlocked() bool {
-	conn.blocked.mu.RLock()
-	defer conn.blocked.mu.RUnlock()
-
-	return conn.blocked.value
+	return conn.blocked.Locked()
 }
 
 // IsClosed safely wraps the amqp connection IsClosed

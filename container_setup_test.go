@@ -134,7 +134,8 @@ func (r RMQC) startRabbitEngine() (string, error) {
 		"-p=5672:5672", "-p=15672:15672",
 		"--name", "grabbit-test-rmq-engine",
 		"--quiet",
-		"cloudamqp/lavinmq"). // "rabbitmq:management").
+		"cloudamqp/lavinmq").
+		// "rabbitmq:management").
 		Output()
 	if err != nil {
 		return "", err
@@ -152,7 +153,7 @@ func (r RMQC) stopRabbitEngine(containerId string) error {
 // AwaitConnectionManagerDone makes sure the managing goroutine has terminated.
 // Call it at the end of test to make friends with the leak detector (test completion clean-up).
 func AwaitConnectionManagerDone(conn *Connection) {
-	if !ConditionWait(context.Background(), conn.ManagerNotifier().Locked, DefaultPoll) {
+	if !conn.AwaitManager(false, DefaultPoll.Timeout) {
 		log.Println("WARNING: Manager still runnig", conn.opt.name)
 	}
 }
@@ -255,30 +256,30 @@ func (r *SafeRand) ClampInt(upper int64) int64 {
 	return r.r.Int63n(upper)
 }
 
-// SafeRegisterMap keeps a record of tags that have been registered with no
-// interest in the associated payload.
+// SafeRegisterMap keeps a record of tags that have been registered with
+// an interest in the original source.
 type SafeRegisterMap struct {
 	mu     sync.RWMutex
-	values map[string]struct{}
+	values map[string]string
 }
 
 func NewSafeRegisterMap() *SafeRegisterMap {
 	return &SafeRegisterMap{
-		values: make(map[string]struct{}),
+		values: make(map[string]string, 8),
 	}
 }
 
-func (m *SafeRegisterMap) Set(tag string) {
+func (m *SafeRegisterMap) Set(tag string, value string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.values[tag] = struct{}{}
+	m.values[tag] = value
 }
 
-func (m *SafeRegisterMap) Has(tag string) bool {
+func (m *SafeRegisterMap) Has(tag string) (string, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	_, has := m.values[tag]
-	return has
+	value, has := m.values[tag]
+	return value, has
 }
 
 func (m *SafeRegisterMap) Length() int {
@@ -287,13 +288,13 @@ func (m *SafeRegisterMap) Length() int {
 	return len(m.values)
 }
 
-func (m *SafeRegisterMap) IsZero() bool {
+func (m *SafeRegisterMap) LenIsZero() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.values) == 0
 }
 
-func (m *SafeRegisterMap) ValueEquals(value int) func() bool {
+func (m *SafeRegisterMap) LenEquals(value int) func() bool {
 	return func() bool {
 		m.mu.RLock()
 		defer m.mu.RUnlock()
@@ -301,7 +302,7 @@ func (m *SafeRegisterMap) ValueEquals(value int) func() bool {
 	}
 }
 
-func (m *SafeRegisterMap) Greater(value int) func() bool {
+func (m *SafeRegisterMap) LenGreater(value int) func() bool {
 	return func() bool {
 		m.mu.RLock()
 		defer m.mu.RUnlock()
@@ -309,7 +310,7 @@ func (m *SafeRegisterMap) Greater(value int) func() bool {
 	}
 }
 
-func (m *SafeRegisterMap) GreaterEquals(value int) func() bool {
+func (m *SafeRegisterMap) LenGreaterEquals(value int) func() bool {
 	return func() bool {
 		m.mu.RLock()
 		defer m.mu.RUnlock()
@@ -317,7 +318,7 @@ func (m *SafeRegisterMap) GreaterEquals(value int) func() bool {
 	}
 }
 
-func (m *SafeRegisterMap) Less(value int) func() bool {
+func (m *SafeRegisterMap) LenLess(value int) func() bool {
 	return func() bool {
 		m.mu.RLock()
 		defer m.mu.RUnlock()
@@ -325,7 +326,7 @@ func (m *SafeRegisterMap) Less(value int) func() bool {
 	}
 }
 
-func (m *SafeRegisterMap) LessEquals(value int) func() bool {
+func (m *SafeRegisterMap) LenLessEquals(value int) func() bool {
 	return func() bool {
 		m.mu.RLock()
 		defer m.mu.RUnlock()
@@ -333,7 +334,7 @@ func (m *SafeRegisterMap) LessEquals(value int) func() bool {
 	}
 }
 
-func (m *SafeRegisterMap) NotZero() bool {
+func (m *SafeRegisterMap) LenNotZero() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.values) != 0
@@ -343,7 +344,30 @@ func (m *SafeRegisterMap) NotZero() bool {
 type SafeCounter struct {
 	counter       int
 	edgeTriggered bool
+	dedupe        bool
+	tag           string
 	mu            sync.RWMutex
+}
+
+// Register adds into 'registries' a fresh new registry for 'c' when condition.
+func (c *SafeCounter) Register(registries *sync.Map, when bool) {
+	if when {
+		registries.Store(c.tag, NewSafeRegisterMap())
+	}
+}
+
+// RegisteredAdd deduplicates 'Add' by testing if the record in 'registries' has not already got a 'key'.
+// Falls back to regualat addition when not tracked in 'registries' of interest.
+func (c *SafeCounter) RegisteredAdd(registries *sync.Map, key string, delta int) {
+	if register, ok := registries.Load(c.tag); ok {
+		record := register.(*SafeRegisterMap)
+		if _, has := record.Has(key); !has {
+			c.Add(delta)
+			record.Set(key, "unique")
+		}
+	} else {
+		c.Add(delta)
+	}
 }
 
 func (c *SafeCounter) Add(delta int) {
@@ -515,6 +539,12 @@ func procStatusEvents(
 	eventCounters *EventCounters,
 	cbRecoveryCounter *SafeCounter,
 ) {
+	// register unique counters
+	registries := &sync.Map{}
+	if eventCounters.DataExhausted != nil {
+		eventCounters.DataExhausted.Register(registries, eventCounters.DataExhausted.dedupe)
+	}
+
 	for {
 		select {
 		case <-ctx.Done(): // 1st level of coroutine protection
@@ -529,39 +559,40 @@ func procStatusEvents(
 			// }
 			switch event.Kind {
 			case EventUp:
+
 				if eventCounters.Up != nil {
-					eventCounters.Up.Add(1)
+					eventCounters.Up.RegisteredAdd(registries, event.SourceName, 1)
 				}
 			case EventDown:
 				if eventCounters.Down != nil {
-					eventCounters.Down.Add(1)
+					eventCounters.Down.RegisteredAdd(registries, event.SourceName, 1)
 				}
 			case EventClosed:
 				if eventCounters.Closed != nil {
-					eventCounters.Closed.Add(1)
+					eventCounters.Closed.RegisteredAdd(registries, event.SourceName, 1)
 				}
 			case EventCannotEstablish:
 				if eventCounters.BadRecovery != nil {
-					eventCounters.BadRecovery.Add(1)
+					eventCounters.BadRecovery.RegisteredAdd(registries, event.SourceName, 1)
 				}
 				if cbRecoveryCounter != nil {
-					cbRecoveryCounter.Add(-1)
+					cbRecoveryCounter.RegisteredAdd(registries, event.SourceName, -1)
 				}
 			case EventDataExhausted:
 				if eventCounters.DataExhausted != nil {
-					eventCounters.DataExhausted.Add(1)
+					eventCounters.DataExhausted.RegisteredAdd(registries, event.SourceName, 1)
 				}
 			case EventMessagePublished:
 				if eventCounters.MsgPublished != nil {
-					eventCounters.MsgPublished.Add(1)
+					eventCounters.MsgPublished.RegisteredAdd(registries, event.SourceName, 1)
 				}
 			case EventMessageReceived:
 				if eventCounters.MsgReceived != nil {
-					eventCounters.MsgReceived.Add(1)
+					eventCounters.MsgReceived.RegisteredAdd(registries, event.SourceName, 1)
 				}
 			case EventDefineTopology:
 				if eventCounters.Topology != nil {
-					eventCounters.Topology.Add(1)
+					eventCounters.Topology.RegisteredAdd(registries, event.SourceName, 1)
 				}
 			default:
 				if event.Err.IsSet() {

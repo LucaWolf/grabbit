@@ -3,6 +3,7 @@ package grabbit
 import (
 	"context"
 	"log"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,11 +39,49 @@ func TestNewConnection(t *testing.T) {
 	defer AwaitConnectionManagerDone(conn)
 	defer conn.Close()
 
-	// connection is up
+	// connection is reported up by events
 	if !ConditionWait(ctx, chCounters.Up.NotZero, DefaultPoll) {
+		t.Fatal("timeout waiting for connection reported UP")
+	}
+	// UP by internal status
+	if !conn.AwaitStatus(true, DefaultPoll.Timeout) {
 		t.Fatal("timeout waiting for connection to be ready")
 	}
-	<-time.After(1 * time.Second) // like some activity on the up connection
+	// managed
+	if !conn.AwaitManager(true, DefaultPoll.Timeout) {
+		t.Fatal("connection should be managed")
+	}
+	// and not blocked
+	if conn.blocked.Locked() {
+		t.Fatal("connection should not be blocked")
+	}
+
+	// we also have safe concurent acces to amqp connection
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		safeBaseConn := conn.Connection()
+		super := safeBaseConn.Super()
+		for range 20 {
+			// strange: no race reported even w/out.
+			// Is amqp.Connection concurrency safe ?
+			safeBaseConn.Lock()
+			closed := super.IsClosed()
+			safeBaseConn.UnLock()
+			if closed {
+				t.Error("Connection should not be closed yet", conn.opt.name)
+			}
+		}
+	}()
+	for range 20 {
+		closed := conn.IsClosed()
+		if closed {
+			t.Error("Connection should not be closed yet", conn.opt.name)
+		}
+	}
+	wg.Wait()
+	// safe access passed
 
 	conn.Close()
 	if !ConditionWait(ctx, chCounters.Down.NotZero, ShortPoll) {
@@ -65,6 +104,7 @@ func TestNewConnection(t *testing.T) {
 	if recoveringCallbackCounter.Value() != 1 {
 		t.Errorf("recoveringCallback expected %v, got %v", 1, recoveringCallbackCounter.Value())
 	}
+
 }
 
 func ReattemptingDenied(name string, retry int) bool {
@@ -322,7 +362,7 @@ func TestConnectionRecoveryNotifier(t *testing.T) {
 	}
 	log.Println("INFO: channel probed for DOWN after", time.Since(tConnectionKill))
 
-	if !conn.AwaitAvailable(LongPoll.Timeout) {
+	if !conn.AwaitStatus(true, LongPoll.Timeout) {
 		t.Fatal("timeout waiting for connection to recover")
 	}
 	log.Println("INFO: channel probed for UP after", time.Since(tConnectionKill))

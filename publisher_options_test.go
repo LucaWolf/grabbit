@@ -249,7 +249,7 @@ func TestPublisherOptions(t *testing.T) {
 	)
 	defer publisher.Channel().ExchangeDelete(EXCHANGE, IF_UNUSED, DELETE_NOWAIT)
 	defer publisher.Channel().QueueDelete(QueueName, IF_UNUSED, IF_EMPTY, DELETE_NOWAIT)
-	if !publisher.AwaitAvailable(LongPoll.Timeout, 0) {
+	if !publisher.AwaitStatus(true, LongPoll.Timeout) {
 		t.Fatal("publisher not ready yet")
 	}
 
@@ -287,9 +287,12 @@ func TestPublisherOptions(t *testing.T) {
 	}
 
 	// publisher's channel should be done
-	latch := publisher.Channel().RecoveryNotifier()
-	if !latch.Wait(ctxMaster, true, LongPoll.Timeout) {
+	if !publisher.AwaitStatus(false, LongPoll.Timeout) {
 		t.Error("publisher should be closed")
+	}
+	// and so its managing routine
+	if !publisher.AwaitManager(false, LongPoll.Timeout) {
+		t.Error("publisher's manager should have terminated")
 	}
 
 	// still have access to the Channel
@@ -330,7 +333,7 @@ func TestPublishNoConfirm(t *testing.T) {
 	defer conn.Close()
 
 	// connection is up
-	if !conn.AwaitAvailable(DefaultPoll.Timeout) {
+	if !conn.AwaitStatus(true, DefaultPoll.Timeout) {
 		t.Fatal("timeout waiting for connection to be ready")
 	}
 
@@ -353,7 +356,7 @@ func TestPublishNoConfirm(t *testing.T) {
 	)
 	defer publisher.Channel().QueueDelete(QueueName, false, false, true)
 
-	if !publisher.AwaitAvailable(DefaultPoll.Timeout, DefaultPoll.Frequency) {
+	if !publisher.AwaitStatus(true, DefaultPoll.Timeout) {
 		t.Fatal("publisher not ready yet")
 	}
 
@@ -373,31 +376,29 @@ func TestPublishNoConfirm(t *testing.T) {
 	}
 
 	batchSelector := NewSafeRand(MSG_COUNT)
-	validate := make(chan DeliveryPayload, MSG_COUNT)
 	registry := NewSafeRegisterMap()
-	go HandleMsgRegistry(ctxMaster, registry, validate)
 
 	optConsumer := DefaultConsumerOptions()
 	optConsumer.WithQueue(QueueName).WithPrefetchTimeout(DefaultPoll.Timeout)
 
 	consumer := NewConsumer(conn, *optConsumer.WithName("consumer.one"),
 		WithChannelOptionName("chan.consumer.one"),
-		WithChannelOptionProcessor(MsgHandlerBulk(batchSelector, validate)),
+		WithChannelOptionProcessor(MsgHandlerBulk(batchSelector, registry)),
 		WithChannelOptionNotification(statusCh),
 		WithChannelOptionTopology(topos),
 	)
 
-	if !consumer.AwaitAvailable(DefaultPoll.Timeout, DefaultPoll.Frequency) {
+	if !consumer.AwaitStatus(true, DefaultPoll.Timeout) {
 		t.Fatal("consumer not ready yet")
 	}
 
 	// this also test for messages consistency as the registry map keeps unique entries
-	if !ConditionWait(ctxMaster, registry.ValueEquals(MSG_COUNT), LongVeryFrequentPoll) {
+	if !ConditionWait(ctxMaster, registry.LenEquals(MSG_COUNT), LongVeryFrequentPoll) {
 		t.Errorf("incomplete consumption: expected %d vs. read %d", MSG_COUNT, registry.Length())
 	}
 	// probe for some random value by the publishing schema
 	msg := fmt.Sprintf(PUBLISH_DATA_SCHEMA, tag, batchSelector.ClampInt(MSG_COUNT))
-	if !registry.Has(msg) {
+	if _, has := registry.Has(msg); !has {
 		t.Error("missing expected value:", msg)
 	}
 }

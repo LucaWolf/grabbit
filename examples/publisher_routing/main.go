@@ -131,7 +131,7 @@ func main() {
 		grabbit.WithChannelOptionTopology(topos),
 	)
 
-	if !publisher.AwaitAvailable(10*time.Second, 1*time.Second) {
+	if !publisher.AwaitStatus(true, 10*time.Second) {
 		log.Println("publisher not ready yet")
 		ctxCancel()
 		<-time.After(3 * time.Second)

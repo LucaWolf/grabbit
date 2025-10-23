@@ -10,10 +10,7 @@ import (
 
 // IsPaused returns a publisher's flow status of the base channel.
 func (ch *Channel) IsPaused() bool {
-	ch.paused.mu.RLock()
-	defer ch.paused.mu.RUnlock()
-
-	return ch.paused.value
+	return ch.paused.Locked()
 }
 
 // IsClosed safely wraps the base channel IsClosed.

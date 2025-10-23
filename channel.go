@@ -15,31 +15,35 @@ import (
 type Channel struct {
 	baseChan  SafeBaseChan         // supporting amqp channel
 	conn      *Connection          // managed connection
-	paused    SafeBool             // flow status when of publisher type
+	paused    latch.NotifyingLatch // flow status when of publisher type
 	opt       ChannelOptions       // user parameters
 	queue     string               // currently assigned work queue
-	connected latch.NotifyingLatch // safe notifiers
 	notifiers persistentNotifiers  // amqp channel operational notifiers
-	active    latch.NotifyingLatch // managing goroutine status
+	connected latch.NotifyingLatch // establishment internally tracked status
+	managed   latch.NotifyingLatch // managing goroutine status
 }
 
-// RecoveryNotifier returns a channel that will emit the current recovery status
-// each time the connection recovers.
-func (ch *Channel) RecoveryNotifier() *latch.NotifyingLatch {
-	return &ch.connected
-}
-
-func (ch *Channel) ManagerNotifier() *latch.NotifyingLatch {
-	return &ch.active
+// AwaitManager waits till the managing goroutine is in the desired state or timeout expires.
+// Provided as a helper tool to confirm the lifespan of the Connection has expired
+// (no goroutine leak) when closed and not usually called from the user application layer.
+func (ch *Channel) AwaitManager(active bool, timeout time.Duration) bool {
+	return awaitOnLatch(&ch.managed, ch.opt.ctx, active, timeout)
 }
 
 // AwaitAvailable waits till the channel is established or timeout expires.
+//
+// Deprecated: replaced by AwaitStatus.
 func (ch *Channel) AwaitAvailable(timeout time.Duration) bool {
-	if timeout == 0 {
-		timeout = 7500 * time.Millisecond
-	}
+	return ch.AwaitStatus(true, timeout)
+}
 
-	return ch.connected.Wait(ch.opt.ctx, false, timeout)
+// AwaitStatus waits till the channel is in the desired state or timeout expires.
+// Pass 'true' for testing open/ready, 'false' for testing if closed.
+//
+// This is a bit safer than [IsClosed] method since it tracks an internal state that
+// flow wraps (after) the base amqp.Channel status change.
+func (ch *Channel) AwaitStatus(established bool, timeout time.Duration) bool {
+	return awaitOnLatch(&ch.connected, ch.opt.ctx, established, timeout)
 }
 
 // NewChannel creates a new managed Channel with the given Connection and optional ChannelOptions.
@@ -86,12 +90,13 @@ func NewChannel(conn *Connection, optionFuncs ...func(*ChannelOptions)) *Channel
 		opt:       *opt,
 		conn:      conn,
 		connected: latch.NewLatch(true, opt.name),
-		active:    latch.NewLatch(true, opt.name),
+		managed:   latch.NewLatch(true, opt.name),
+		paused:    latch.NewLatch(false, opt.name), // active by default
 	}
 
 	go func() {
-		ch.active.Unlock()
-		defer ch.active.Lock()
+		ch.managed.Unlock()
+		defer ch.managed.Lock()
 
 		if !ch.reconnectLoop(false) {
 			return
@@ -104,15 +109,16 @@ func NewChannel(conn *Connection, optionFuncs ...func(*ChannelOptions)) *Channel
 
 // pause marks the channel as paused or unpaused.
 //
-// It takes a boolean value as a parameter.
+// It takes a boolean value as a parameter. Server sends 'false' to suspend traffic.
 // The method raises an event to indicate whether the channel is blocked or unblocked,
 // and updates the paused value of the Channel accordingly.
 func (ch *Channel) pause(value bool) {
-	ch.paused.mu.Lock()
-	defer ch.paused.mu.Unlock()
-
 	kind := EventUnBlocked
+
 	if value {
+		ch.paused.Unlock()
+	} else {
+		ch.paused.Lock()
 		kind = EventBlocked
 	}
 
@@ -121,8 +127,6 @@ func (ch *Channel) pause(value bool) {
 		SourceName: ch.opt.name,
 		Kind:       kind,
 	}.raise(ch.opt.notifier)
-
-	ch.paused.value = value
 }
 
 // manage keep the channel alive.
@@ -142,11 +146,19 @@ func (ch *Channel) manage() {
 
 	for {
 		if recovering {
-			ch.refreshNotifiers()
-			// delayed considered completion: there might be functionality
-			// depending on consuming/publishing notifications being setup
-			ch.connected.Unlock()
-			recovering = false
+			if err := ch.refreshNotifiers(); err == nil {
+				// delayed considered completion: there might be functionality
+				// depending on consuming/publishing notifications being setup
+				ch.connected.Unlock()
+				recovering = false
+			} else {
+				// cannot do these basics even after a recovery/initial link-up?
+				if !ch.recover(SomeErrFromError(err, true), true) {
+					return
+				}
+				<-time.After(ch.opt.delayer.Delay(3))
+				continue
+			}
 		}
 
 		// must wait one of these events
@@ -168,11 +180,15 @@ func (ch *Channel) manage() {
 					ch.opt.cbNotifyReturn(msg, ch)
 				}
 			case err, notifierStatus := <-ch.notifiers.Closed:
+				ch.baseChan.reset() // ASAP
+				ch.connected.Lock() // ASAP
 				if !ch.recover(SomeErrFromError(err, err != nil), notifierStatus) {
 					return
 				}
 				recovering = true
 			case reason, notifierStatus := <-ch.notifiers.Cancel:
+				ch.baseChan.reset() // ASAP
+				ch.connected.Lock() // ASAP
 				if !ch.recover(SomeErrFromString(reason), notifierStatus) {
 					return
 				}
@@ -211,8 +227,6 @@ func (ch *Channel) recover(err OptionalError, notifierStatus bool) bool {
 	}
 
 	if !notifierStatus {
-		ch.baseChan.reset()
-
 		Event{
 			SourceType: CliChannel,
 			SourceName: ch.opt.name,
@@ -235,7 +249,7 @@ func (ch *Channel) rebase(retry int) bool {
 	result := true
 	optError := OptionalError{}
 
-	connected := ch.conn.AwaitAvailable(ch.opt.delayer.Delay(retry))
+	connected := ch.conn.AwaitStatus(true, ch.opt.delayer.Delay(retry))
 	if !connected {
 		Event{
 			SourceType: CliChannel,

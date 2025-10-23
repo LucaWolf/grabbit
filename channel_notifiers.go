@@ -19,7 +19,7 @@ type persistentNotifiers struct {
 // For publisher channels, it sets up notifiers for various events such as channel closure, cancellation, flow control, publishing confirmation,
 // and returned messages. It also calls the Confirm method on baseChan.super to enable publisher confirms.
 // For consumer channels, it calls the consumerSetup function to perform setup actions, and then starts a goroutine to run the consumer.
-func (ch *Channel) refreshNotifiers() {
+func (ch *Channel) refreshNotifiers() error {
 	ch.baseChan.mu.Lock()
 	if ch.baseChan.super != nil {
 		// common notifiers
@@ -49,7 +49,11 @@ func (ch *Channel) refreshNotifiers() {
 	ch.baseChan.mu.Unlock()
 	// consumers specific have own baseChan.super protection
 	if ch.opt.implParams.IsConsumer {
-		ch.notifiers.Consumer = ch.consumer()
+		var err error
+		if ch.notifiers.Consumer, err = ch.consumer(); err != nil {
+			return err
+		}
 		go ch.gobble(ch.notifiers.Consumer)
 	}
+	return nil
 }

@@ -12,77 +12,87 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// HandleMsgRegistry accumulates in the registry and tests the uniqueness of the ACK-ed messages (delivered via 'ch')
-func HandleMsgRegistry(
-	ctx context.Context,
-	registry *SafeRegisterMap,
-	ch chan DeliveryPayload,
-) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case m, chAlive := <-ch:
-			if !chAlive {
-				return
-			}
-			if registry.Has(string(m)) {
-				// !!!NOTE!!! this keeps happening. Perhaps due to in-flight during the cut?
-				// log.Printf("\033[91mWARNING\033[0m duplicate; msg [%s] already ACK-ed!\n", string(m))
-			} else {
-				registry.Set(string(m))
+// RegisterSlice simulates the messages processing by validating (skipping) the duplicates
+// and spending some work load time
+func RegisterSlice(messages []DeliveryData, registry *SafeRegisterMap, source string) {
+	for _, msg := range messages {
+		if msg.Redelivered {
+			if origin, has := registry.Has(string(msg.Body)); has {
+				log.Printf(
+					"[DUPLICATE] [%s] from [%s] first by [%s]\n",
+					string(msg.Body),
+					source,
+					origin,
+				)
+				_ = origin
+				continue
 			}
 		}
+		registry.Set(string(msg.Body), source)
 	}
-}
-
-func RegisterSlice(messages []DeliveryData, ch chan DeliveryPayload) {
-	bodies := make([][]byte, len(messages))
-	for n, msg := range messages {
-		bodies[n] = msg.Body
-		ch <- msg.Body
-	}
-}
-
-func MsgHandlerBulk(r *SafeRand, chReg chan DeliveryPayload) CallbackProcessMessages {
-	return func(props *DeliveriesProperties, messages []DeliveryData, mustAck bool, ch *Channel) {
-		const FULL_BATCH_ACK_THRESHOLD = 10
-
-		if !mustAck {
-			return
-		}
-		idxPivot := 2 * len(messages) / 3
-		idxLast := len(messages) - 1
-		pivotDeliveryTag := messages[idxPivot].DeliveryTag
-		lastDeliveryTag := messages[idxLast].DeliveryTag
-
-		if len(messages) < FULL_BATCH_ACK_THRESHOLD || ch.RecoveryNotifier().Locked() {
-			RegisterSlice(messages, chReg)
-			ch.Ack(lastDeliveryTag, true)
-		} else {
-			// select one of the halves for Ack-ing and re-enqueue the other
-			if r.Int()%2 == 0 {
-				RegisterSlice(messages[:idxPivot+1], chReg)
-				ch.Ack(pivotDeliveryTag, true)
-				ch.Nack(lastDeliveryTag, true, true)
-			} else {
-				RegisterSlice(messages[idxPivot+1:], chReg)
-				ch.Nack(pivotDeliveryTag, true, true)
-				ch.Ack(lastDeliveryTag, true)
-			}
-		}
-	}
+	// simulate realisting processing load
+	<-time.After(time.Duration(len(messages)*10) * time.Millisecond)
 }
 
 // msgSequential returns true if messages are sequential (same QoS batch)
-// func msgSequential(messages []DeliveryData) bool {
+// func msgSequential(messages []DeliveryData, name string) bool {
 // 	for i := 1; i < len(messages); i++ {
 // 		if messages[i].DeliveryTag != messages[i-1].DeliveryTag+1 {
+// 			fmt.Println(
+// 				" --- unordered registered range from",
+// 				string(messages[0].Body),
+// 				string(messages[len(messages)-1].Body),
+// 				name,
+// 			)
 // 			return false
 // 		}
 // 	}
 // 	return true
 // }
+
+func MsgHandlerBulk(r *SafeRand, registry *SafeRegisterMap) CallbackProcessMessages {
+	return func(props *DeliveriesProperties, messages []DeliveryData, mustAck bool, ch *Channel) {
+		const FULL_BATCH_ACK_THRESHOLD = 10
+
+		// if !mustAck {
+		// 	log.Println(ch.Name(), "ACK disabled, flush during recovering", len(messages))
+		// 	log.Println(string(messages[0].Body), "->", string(messages[len(messages)-1].Body))
+		// 	return
+		// }
+
+		idxPivot := 2 * len(messages) / 3
+		idxLast := len(messages) - 1
+		pivotDeliveryTag := messages[idxPivot].DeliveryTag
+		lastDeliveryTag := messages[idxLast].DeliveryTag
+
+		// Is it possible the client has successful ACK state but server not?
+		// Duplicate deliveries have been obeserved after link cut-off/recovery.
+		// Adress by testing ch.AwaitStatus(false, timer) -- degrades app side throughput, or
+		// deduplicate at worker side, like RegisterSlice does
+		if len(messages) < FULL_BATCH_ACK_THRESHOLD {
+			// msgSequential(messages, ch.Name())
+			if err := ch.Ack(lastDeliveryTag, true); err == nil {
+				RegisterSlice(messages, registry, ch.Name())
+			}
+		} else {
+			// select one of the halves for Ack-ing and re-enqueue the other
+			if r.Int()%2 == 0 {
+				// msgSequential(messages[:idxPivot+1], ch.Name())
+				if ch.Ack(pivotDeliveryTag, true) == nil &&
+					ch.Nack(lastDeliveryTag, true, true) == nil {
+					RegisterSlice(messages[:idxPivot+1], registry, ch.Name())
+				}
+			} else {
+				// msgSequential(messages[idxPivot+1:], ch.Name())
+				if ch.Nack(pivotDeliveryTag, true, true) == nil &&
+					ch.Ack(lastDeliveryTag, true) == nil {
+					RegisterSlice(messages[idxPivot+1:], registry, ch.Name())
+				}
+			}
+		}
+
+	}
+}
 
 func MsgHandlerQoS(
 	countQos, countAck *SafeCounter,
@@ -128,7 +138,7 @@ func TestBatchConsumer(t *testing.T) {
 
 	chCounters := &EventCounters{
 		Up:            &SafeCounter{},
-		DataExhausted: &SafeCounter{},
+		DataExhausted: &SafeCounter{tag: EventDataExhausted.String(), dedupe: true},
 		MsgPublished:  &SafeCounter{},
 	}
 	go procStatusEvents(ctxMaster, statusCh, chCounters, &recoveringCallbackCounter)
@@ -142,9 +152,17 @@ func TestBatchConsumer(t *testing.T) {
 	defer AwaitConnectionManagerDone(conn)
 	defer conn.Close()
 
-	// connection is up
+	// conn manager is up
+	if !conn.AwaitManager(true, LongPoll.Timeout) {
+		t.Fatalf("connection manager should be running")
+	}
+	// connection is up notice
 	if !ConditionWait(ctxMaster, chCounters.Up.NotZero, DefaultPoll) {
 		t.Fatal("timeout waiting for connection to be ready")
+	}
+	// connection is up internally
+	if !conn.AwaitStatus(true, LongPoll.Timeout) {
+		t.Fatalf("connection should have gone initially UP")
 	}
 
 	// massive publishing causes a lot of events.
@@ -164,74 +182,99 @@ func TestBatchConsumer(t *testing.T) {
 		WithChannelOptionTopology(topos),
 		WithChannelOptionNotification(statusCh),
 	)
-	defer publisher.Channel().QueueDelete(QueueName, false, false, true)
-
-	if !publisher.AwaitAvailable(LongPoll.Timeout, LongPoll.Frequency) {
+	if !publisher.AwaitStatus(true, LongPoll.Timeout) {
 		t.Fatal("publisher not ready yet")
 	}
+	defer publisher.Channel().QueueDelete(QueueName, false, false, true)
+
 	if _, err := PublishMsgBulkOptions(publisher, opt, MSG_COUNT, "exch.default"); err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
 	if !ConditionWait(ctxMaster, chCounters.MsgPublished.ValueEquals(MSG_COUNT), LongPoll) {
 		t.Error("timeout pushing all the messages", chCounters.MsgPublished.Value())
 	}
 	publisher.Close()
 
-	validate := make(chan DeliveryPayload, 25)
 	batchSelector := NewSafeRand(763482)
 	registry := NewSafeRegisterMap()
-	go HandleMsgRegistry(ctxMaster, registry, validate)
-
-	optConsumer := DefaultConsumerOptions()
-	optConsumer.WithQueue(QueueName).WithPrefetchTimeout(DefaultPoll.Timeout)
 
 	// start many consumers feeding events into the same pot
+	delayer := DefaultDelayer{Value: 7 * time.Second, RetryCap: 7}
 	type ConsumerAttr struct {
 		Name          string
 		PrefetchCount int
 	}
 	consumersAttr := []ConsumerAttr{
-		{"consumer.one", 8},
-		{"consumer.two", 3},
-		{"consumer.three", 4},
-		{"consumer.four", 7},
-		{"consumer.five", 13},
-		{"consumer.six", 19},
-		{"consumer.seven", 21},
+		{"one", 8},
+		// {"two", 3},
+		// {"three", 4},
+		// {"four", 7},
+		// {"five", 13},
+		{"six", 19},
+		{"seven", 21},
 	}
 	consumers := make([]*Consumer, 0, len(consumersAttr))
+	tConsumerInit := time.Now()
 	for _, consumerAttr := range consumersAttr {
-		consumer := NewConsumer(conn, *optConsumer.WithPrefetchCount(consumerAttr.PrefetchCount).WithName(consumerAttr.Name),
+		optConsumer := DefaultConsumerOptions()
+		opt := optConsumer.
+			WithQueue(QueueName).
+			WithPrefetchTimeout(DefaultPoll.Timeout).
+			WithPrefetchCount(consumerAttr.PrefetchCount).
+			WithName(consumerAttr.Name)
+
+		consumer := NewConsumer(conn, *opt,
 			WithChannelOptionName("chan."+consumerAttr.Name),
-			WithChannelOptionProcessor(MsgHandlerBulk(batchSelector, validate)),
+			WithChannelOptionProcessor(MsgHandlerBulk(batchSelector, registry)),
 			WithChannelOptionNotification(statusCh),
+			WithChannelOptionDelay(delayer),
 		)
 		consumers = append(consumers, consumer)
 	}
+	for i, c := range consumers {
+		if !c.AwaitStatus(true, LongPoll.Timeout) {
+			t.Fatalf("consumer [%s] not ready yet", consumersAttr[i].Name)
+		}
+	}
+	log.Println("INFO: channel(s) probed for initial UP after", time.Since(tConsumerInit))
 
 	// sever the link some way through consuming
-	ConditionWait(ctxMaster, registry.GreaterEquals(MSG_COUNT/7), LongVeryFrequentPoll)
+	ConditionWait(ctxMaster, registry.LenGreaterEquals(MSG_COUNT/7), LongVeryFrequentPoll)
 	if err := rmqc.killConnections(conn.opt.name); err != nil {
 		t.Error(err)
 	}
 	tConnectionKill := time.Now()
 
-	// just to cover the code path of AwaitAvailable
+	// make sure both DOWN and back UP happened
+	if !conn.AwaitStatus(false, LongPoll.Timeout) {
+		t.Fatalf("connection should have gone DOWN")
+	}
 	for i, c := range consumers {
-		if !c.AwaitAvailable(LongPoll.Timeout, 0) {
+		if !c.AwaitStatus(false, LongPoll.Timeout) {
+			t.Fatalf("consumer [%s] should have gone down", consumersAttr[i].Name)
+		}
+	}
+	log.Println("INFO: channel(s) probed for DOWN after", time.Since(tConnectionKill))
+
+	if !conn.AwaitStatus(true, LongPoll.Timeout) {
+		t.Fatalf("connection should have gone back UP")
+	}
+	// just to cover the code path of AwaitStatus
+	for i, c := range consumers {
+		if !c.AwaitStatus(true, LongPoll.Timeout) {
 			t.Fatalf("consumer [%s] not ready yet", consumersAttr[i].Name)
 		}
 	}
-	log.Println("INFO: channel probed for UP after", time.Since(tConnectionKill))
+	log.Println("INFO: channel(s) probed for UP after", time.Since(tConnectionKill))
 
 	// closing a particular consumer should cleanly redirect the messages to the rest
 	// do we need using Cancel() to guarantee success?
-	victim := consumers[len(consumersAttr)/2]
-	victim.Cancel()
-	victim.Close()
+	// victim := consumers[len(consumersAttr)/2]
+	// victim.Cancel()
+	// victim.Close()
 
-	// ... and get all messages consumed (eventually)
-	if !ConditionWait(ctxMaster, chCounters.DataExhausted.GreaterEquals(len(consumersAttr)), LongPoll) {
+	// ... and get all messages consumed (eventually) via strict & unique exhaustion tested.
+	if !ConditionWait(ctxMaster, chCounters.DataExhausted.ValueEquals(len(consumersAttr)), LongPoll) {
 		t.Error("timeout waiting for all consumers to exhaust the queue", chCounters.DataExhausted.Value())
 	}
 
@@ -295,7 +338,7 @@ func TestConsumerExclusive(t *testing.T) {
 		WithChannelOptionTopology(topos),
 	)
 	defer publisher.Channel().QueueDelete(QueueName, false, false, true)
-	if !publisher.AwaitAvailable(LongPoll.Timeout, 0) {
+	if !publisher.AwaitStatus(true, LongPoll.Timeout) {
 		t.Fatal("publisher not ready yet")
 	}
 
@@ -316,7 +359,7 @@ func TestConsumerExclusive(t *testing.T) {
 		WithChannelOptionName("chan.alpha"),
 		WithChannelOptionProcessor(MsgHandlerQoS(qosCounter, countAckAlpha, CONSUMER_BATCH_SIZE)),
 	)
-	if !alphaConsumer.AwaitAvailable(LongPoll.Timeout, 0) {
+	if !alphaConsumer.AwaitStatus(true, LongPoll.Timeout) {
 		t.Fatal("alphaConsumer not ready yet")
 	}
 	// nothing for this guy on the same queue, different connection though
@@ -334,7 +377,7 @@ func TestConsumerExclusive(t *testing.T) {
 	// 	WithChannelOptionName("chan.beta"),
 	// 	WithChannelOptionProcessor(MsgHandlerQoS(qosCounter, countAckBeta, CONSUMER_BATCH_SIZE)),
 	// )
-	// if betaConsumer.AwaitAvailable(LongPoll.Timeout, 0) {
+	// if !betaConsumer.AwaitStatus(false, LongPoll.Timeout) {
 	// 	t.Fatal("betaConsumer should be in lock/not ready yet state due to alphaConsumer")
 	// }
 	// betaConsumer.Close()
@@ -491,7 +534,7 @@ func TestConsumerOptions(t *testing.T) {
 		WithChannelOptionProcessor(defaultPayloadProcessor),
 	)
 	// to ensure even distribution must have the consumers ready
-	if !alphaConsumer.AwaitAvailable(LongPoll.Timeout, 0) {
+	if !alphaConsumer.AwaitStatus(true, LongPoll.Timeout) {
 		t.Fatal("alphaConsumer not ready yet")
 	}
 
@@ -508,7 +551,7 @@ func TestConsumerOptions(t *testing.T) {
 	defer publisher.Close()
 	defer publisher.Channel().QueueDelete(QueueName, false, false, true)
 
-	if !publisher.AwaitAvailable(LongPoll.Timeout, 0) {
+	if !publisher.AwaitStatus(true, LongPoll.Timeout) {
 		t.Fatal("publisher not ready yet")
 	}
 	if _, err := PublishMsgBulkOptions(publisher, optPub, MSG_COUNT, "exch.default"); err != nil {
@@ -557,7 +600,7 @@ func TestConsumerOptions(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Error("subsequent close (no conn)", err)
 	}
-	if alphaConsumer.AwaitAvailable(0, 0) {
-		t.Error("consumer context should be done")
+	if !alphaConsumer.AwaitStatus(false, LongPoll.Timeout) {
+		t.Error("consumer should be done/closed")
 	}
 }

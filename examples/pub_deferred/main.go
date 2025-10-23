@@ -171,7 +171,7 @@ func main() {
 		grabbit.WithChannelOptionNotifyReturn(OnNotifyReturn),
 	)
 
-	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
+	if !publisher.AwaitStatus(true, 30*time.Second) {
 		log.Println("publisher not ready yet")
 		ctxCancel()
 		<-time.After(7 * time.Second)

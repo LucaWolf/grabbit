@@ -8,7 +8,7 @@ import (
 
 // consumer sets up the amqp Deliveries feed for the given channel
 // (wraps the amqp.Channel.Consume method after setting the QoS).
-func (ch *Channel) consumer() <-chan amqp.Delivery {
+func (ch *Channel) consumer() (<-chan amqp.Delivery, error) {
 	if err := ch.Qos(ch.opt.implParams.PrefetchCount, ch.opt.implParams.PrefetchSize, ch.opt.implParams.QosGlobal); err != nil {
 		Event{
 			SourceType: CliChannel,
@@ -40,7 +40,7 @@ func (ch *Channel) consumer() <-chan amqp.Delivery {
 		}.raise(ch.opt.notifier)
 	}
 
-	return consumer
+	return consumer, err
 }
 
 // gobble runs the consumer function.
@@ -55,29 +55,26 @@ func (ch *Channel) gobble(consumer <-chan amqp.Delivery) {
 	var props DeliveriesProperties
 	mustAck := !ch.opt.implParams.ConsumerAutoAck
 	messages := make([]DeliveryData, 0, ch.opt.implParams.PrefetchCount)
+	_, transitions := ch.connected.Details()
 
 	for {
 		select {
 		case <-ch.opt.ctx.Done(): // main chan and notifiers.Consumers should also be gone
-			ch.Cancel(ch.opt.implParams.ConsumerName, true)
 			if len(messages) != 0 {
 				// conn/chan are gone, cannot ACK/NAK anyways
-				mustAck = false
-				ch.opt.cbProcessMessages(&props, messages, mustAck, ch)
+				ch.opt.cbProcessMessages(&props, messages, false, ch)
 			}
 			return
 		case msg, ok := <-consumer: // notifiers data
 			if !ok {
-				ch.Cancel(ch.opt.implParams.ConsumerName, true)
 				if len(messages) != 0 {
 					// conn/chan are gone, cannot ACK/NAK anyways
-					mustAck = false
-					ch.opt.cbProcessMessages(&props, messages, mustAck, ch)
+					ch.opt.cbProcessMessages(&props, messages, false, ch)
 				}
 				return
 			}
 
-			// set props
+			// set deliveries property to first in the batch (all the same common header)
 			if len(messages) == 0 {
 				props = DeliveryPropsFrom(&msg)
 			}
@@ -87,6 +84,14 @@ func (ch *Channel) gobble(consumer <-chan amqp.Delivery) {
 			// process
 			if len(messages) == ch.opt.implParams.PrefetchCount {
 				if len(messages) != 0 {
+					// if link is still on, this test flies through.
+					// If broken then a small delay won't mater anyway since we're recovering and
+					// quite possibly client is dumping (want delivered again) this batch
+					mustAck = mustAck && ch.AwaitStatus(true, 100*time.Millisecond)
+					if _, current := ch.connected.Details(); transitions != current {
+						// cannot push ACK if recoverying (fails sending) or recovered (new channel)
+						mustAck = false
+					}
 					ch.opt.cbProcessMessages(&props, messages, mustAck, ch)
 				}
 				messages = make([]DeliveryData, 0, ch.opt.implParams.PrefetchCount)
@@ -94,8 +99,17 @@ func (ch *Channel) gobble(consumer <-chan amqp.Delivery) {
 
 		case <-time.After(ch.opt.implParams.PrefetchTimeout):
 			kind := EventDataExhausted
+
 			if len(messages) != 0 {
 				kind = EventDataPartial
+				// if link is still on this test flies through.
+				// If broken then a small delay won't mater anyway since we're recovering and
+				// quite possibly client is dumping (want delivered again) this batch
+				mustAck = mustAck && ch.AwaitStatus(true, 100*time.Millisecond)
+				if _, current := ch.connected.Details(); transitions != current {
+					// cannot push ACK if recoverying (fails sending) or recovered (new channel)
+					mustAck = false
+				}
 				ch.opt.cbProcessMessages(&props, messages, mustAck, ch)
 				messages = make([]DeliveryData, 0, ch.opt.implParams.PrefetchCount)
 			}

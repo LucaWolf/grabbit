@@ -62,7 +62,7 @@ func NewConsumer(conn *Connection, opt ConsumerOptions, optionFuncs ...func(*Cha
 }
 
 // Available returns the status of both the underlying connection and channel.
-// (prefer using AwaitAvailable method)
+// (prefer using AwaitStatus method)
 func (c *Consumer) Available() (bool, bool) {
 	return !c.channel.conn.IsClosed(), !c.channel.IsClosed()
 }
@@ -70,8 +70,17 @@ func (c *Consumer) Available() (bool, bool) {
 // AwaitAvailable waits till the consumers's infrastructure is ready or timeout expires.
 // It delegates operation to the  supporting [Channel].
 // (pollFreq is now obsolete)
+//
+// Deprecated: replaced by AwaitStatus.
 func (c *Consumer) AwaitAvailable(timeout time.Duration, pollFreq time.Duration) bool {
-	return c.channel.AwaitAvailable(timeout)
+	return c.channel.AwaitStatus(true, timeout)
+}
+
+// AwaitStatus waits till the channel is in the desired state or timeout expires.
+// It delegates operation to the supporting [Channel].
+// Pass 'true' for testing open/active, 'false' for testing if closed.
+func (c *Consumer) AwaitStatus(established bool, timeout time.Duration) bool {
+	return c.channel.AwaitStatus(established, timeout)
 }
 
 // Close shuts down cleanly the consumer channel. If there are other consumers of the same queue,
