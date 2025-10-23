@@ -84,3 +84,26 @@ type ParamsExchangeDelete struct {
 	IfUnused bool
 	NoWait   bool
 }
+
+type ParamsTx struct{}
+
+type ParamsTxCommit struct{}
+
+type ParamsTxRollback struct{}
+
+type ParamsFlow struct {
+	Active bool
+}
+
+type ParamsConfirm struct {
+	NoWait bool
+}
+
+type ParamsRecover struct {
+	Requeue bool
+}
+
+type ParamsGet struct {
+	Queue   string
+	AutoAck bool
+}

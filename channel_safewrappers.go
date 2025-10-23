@@ -78,7 +78,7 @@ func (ch *Channel) Ack(tag uint64, multiple bool) error {
 	return amqp.ErrClosed
 }
 
-// Ack safely wraps the base channel Nak.
+// Nack safely wraps the base channel Nak.
 func (ch *Channel) Nack(tag uint64, multiple bool, requeue bool) error {
 	ch.baseChan.mu.Lock()
 	defer ch.baseChan.mu.Unlock()
@@ -291,4 +291,233 @@ func (ch *Channel) Name() string {
 // locking/unlocking mechanisms for safety!
 func (ch *Channel) Channel() *SafeBaseChan {
 	return &ch.baseChan
+}
+
+// NotifyClose safely wraps the base channel NotifyClose.
+func (ch *Channel) NotifyClose(c chan *amqp.Error) chan *amqp.Error {
+	ch.baseChan.mu.RLock()
+	defer ch.baseChan.mu.RUnlock()
+
+	if ch.baseChan.super != nil {
+		return ch.baseChan.super.NotifyClose(c)
+	}
+	close(c)
+	return c
+}
+
+// NotifyFlow safely wraps the base channel NotifyFlow.
+func (ch *Channel) NotifyFlow(c chan bool) chan bool {
+	ch.baseChan.mu.RLock()
+	defer ch.baseChan.mu.RUnlock()
+
+	if ch.baseChan.super != nil {
+		return ch.baseChan.super.NotifyFlow(c)
+	}
+	close(c)
+	return c
+}
+
+// NotifyReturn safely wraps the base channel NotifyReturn.
+func (ch *Channel) NotifyReturn(c chan amqp.Return) chan amqp.Return {
+	ch.baseChan.mu.RLock()
+	defer ch.baseChan.mu.RUnlock()
+
+	if ch.baseChan.super != nil {
+		return ch.baseChan.super.NotifyReturn(c)
+	}
+	close(c)
+	return c
+}
+
+// NotifyCancel safely wraps the base channel NotifyCancel.
+func (ch *Channel) NotifyCancel(c chan string) chan string {
+	ch.baseChan.mu.RLock()
+	defer ch.baseChan.mu.RUnlock()
+
+	if ch.baseChan.super != nil {
+		return ch.baseChan.super.NotifyCancel(c)
+	}
+	close(c)
+	return c
+}
+
+// NotifyConfirm safely wraps the base channel NotifyConfirm.
+func (ch *Channel) NotifyConfirm(ack, nack chan uint64) (chan uint64, chan uint64) {
+	ch.baseChan.mu.RLock()
+	defer ch.baseChan.mu.RUnlock()
+
+	if ch.baseChan.super != nil {
+		return ch.baseChan.super.NotifyConfirm(ack, nack)
+	}
+	close(ack)
+	close(nack)
+	return ack, nack
+}
+
+// NotifyPublish safely wraps the base channel NotifyPublish.
+func (ch *Channel) NotifyPublish(confirm chan amqp.Confirmation) chan amqp.Confirmation {
+	ch.baseChan.mu.RLock()
+	defer ch.baseChan.mu.RUnlock()
+
+	if ch.baseChan.super != nil {
+		return ch.baseChan.super.NotifyPublish(confirm)
+	}
+	close(confirm)
+	return confirm
+}
+
+// QueueBind safely wraps the base channel QueueBind.
+func (ch *Channel) QueueBind(name, key, exchange string, noWait bool, args amqp.Table) error {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	if ch.baseChan.super != nil {
+		err := ch.baseChan.super.QueueBind(name, key, exchange, noWait, args)
+		trace.QueueBind(ch.opt.ctx, name, key, exchange, noWait, args)
+		return err
+	}
+	return amqp.ErrClosed
+}
+
+// QueueUnbind safely wraps the base channel QueueUnbind.
+func (ch *Channel) QueueUnbind(name, key, exchange string, args amqp.Table) error {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	if ch.baseChan.super != nil {
+		err := ch.baseChan.super.QueueUnbind(name, key, exchange, args)
+		trace.QueueUnbind(ch.opt.ctx, name, key, exchange, args)
+		return err
+	}
+	return amqp.ErrClosed
+}
+
+// ConsumeWithContext safely wraps the base channel ConsumeWithContext.
+func (ch *Channel) ConsumeWithContext(ctx context.Context, queue, consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) (<-chan amqp.Delivery, error) {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	if ch.baseChan.super != nil {
+		result, err := ch.baseChan.super.ConsumeWithContext(ctx, queue, consumer, autoAck, exclusive, noLocal, noWait, args)
+		trace.ConsumeWithContext(ctx, queue, consumer, autoAck, exclusive, noLocal, noWait, args)
+		return result, err
+	}
+	return nil, amqp.ErrClosed
+}
+
+// Publish safely wraps the base channel Publish.
+func (ch *Channel) Publish(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	if ch.baseChan.super != nil {
+		err := ch.baseChan.super.Publish(exchange, key, mandatory, immediate, msg)
+		trace.Publish(ch.opt.ctx, exchange, key, mandatory, immediate, msg)
+		return err
+	}
+	return amqp.ErrClosed
+}
+
+// PublishWithDeferredConfirm safely wraps the base channel PublishWithDeferredConfirm.
+func (ch *Channel) PublishWithDeferredConfirm(exchange, key string, mandatory, immediate bool, msg amqp.Publishing) (*amqp.DeferredConfirmation, error) {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	if ch.baseChan.super != nil {
+		result, err := ch.baseChan.super.PublishWithDeferredConfirm(exchange, key, mandatory, immediate, msg)
+		trace.PublishWithDeferredConfirm(ch.opt.ctx, exchange, key, mandatory, immediate, msg)
+		return result, err
+	}
+	return nil, amqp.ErrClosed
+}
+
+// Get safely wraps the base channel Get.
+func (ch *Channel) Get(queue string, autoAck bool) (amqp.Delivery, bool, error) {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	if ch.baseChan.super != nil {
+		result, ok, err := ch.baseChan.super.Get(queue, autoAck)
+		trace.Get(ch.opt.ctx, queue, autoAck)
+		return result, ok, err
+	}
+	return amqp.Delivery{}, false, amqp.ErrClosed
+}
+
+// Tx safely wraps the base channel Tx.
+func (ch *Channel) Tx() error {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	if ch.baseChan.super != nil {
+		err := ch.baseChan.super.Tx()
+		trace.Tx(ch.opt.ctx)
+		return err
+	}
+	return amqp.ErrClosed
+}
+
+// TxCommit safely wraps the base channel TxCommit.
+func (ch *Channel) TxCommit() error {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	if ch.baseChan.super != nil {
+		err := ch.baseChan.super.TxCommit()
+		trace.TxCommit(ch.opt.ctx)
+		return err
+	}
+	return amqp.ErrClosed
+}
+
+// TxRollback safely wraps the base channel TxRollback.
+func (ch *Channel) TxRollback() error {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	if ch.baseChan.super != nil {
+		err := ch.baseChan.super.TxRollback()
+		trace.TxRollback(ch.opt.ctx)
+		return err
+	}
+	return amqp.ErrClosed
+}
+
+// Flow safely wraps the base channel Flow.
+func (ch *Channel) Flow(active bool) error {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	if ch.baseChan.super != nil {
+		err := ch.baseChan.super.Flow(active)
+		trace.Flow(ch.opt.ctx, active)
+		return err
+	}
+	return amqp.ErrClosed
+}
+
+// Confirm safely wraps the base channel Confirm.
+func (ch *Channel) Confirm(noWait bool) error {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	if ch.baseChan.super != nil {
+		err := ch.baseChan.super.Confirm(noWait)
+		trace.Confirm(ch.opt.ctx, noWait)
+		return err
+	}
+	return amqp.ErrClosed
+}
+
+// Recover safely wraps the base channel Recover.
+func (ch *Channel) Recover(requeue bool) error {
+	ch.baseChan.mu.Lock()
+	defer ch.baseChan.mu.Unlock()
+
+	if ch.baseChan.super != nil {
+		err := ch.baseChan.super.Recover(requeue)
+		trace.Recover(ch.opt.ctx, requeue)
+		return err
+	}
+	return amqp.ErrClosed
 }
