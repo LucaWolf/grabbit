@@ -23,7 +23,7 @@ func (ch *Channel) consumer() <-chan amqp.Delivery {
 		qName = ch.queue // only when IsDestination
 	}
 
-	consumer, err := ch.Consume(qName,
+	consumer, err := ch.ConsumeWithContext(ch.opt.ctx, qName,
 		ch.opt.implParams.ConsumerName,
 		ch.opt.implParams.ConsumerAutoAck,
 		ch.opt.implParams.ConsumerExclusive,

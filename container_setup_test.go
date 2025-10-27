@@ -158,7 +158,7 @@ func TestMain(m *testing.M) {
 		}
 		log.Fatal("RabbitMQ engine not available")
 	}
-	log.Printf("RabbitMQ engine operational (%v). Start the actual testing...\n", time.Since(tStart))
+	log.Printf("RMQ engine operational (%v). Start the actual testing...\n", time.Since(tStart))
 
 	flag.Parse() // capture things like '-race', etc.
 	// FIXME perhaps adopt leak detection at individual test level

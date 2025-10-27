@@ -268,3 +268,44 @@ func TestConnectionCredentialProvider(t *testing.T) {
 		t.Errorf("pwdCallback expected %v, got %v", 1, pwdCallbackCounter.Value())
 	}
 }
+
+func TestConnectionRecoveryNotifier(t *testing.T) {
+	connStatusChan := make(chan Event, 32)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	chCounters := &EventCounters{
+		Up:     &SafeCounter{},
+		Down:   &SafeCounter{},
+		Closed: &SafeCounter{},
+	}
+	go procStatusEvents(ctx, connStatusChan, chCounters, nil)
+
+	conn := NewConnection(
+		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
+		WithConnectionOptionName("test.conn"),
+		WithConnectionOptionDown(connDownCB),
+		WithConnectionOptionUp(connUpCB),
+		WithConnectionOptionRecovering(connReconnectCB),
+		WithConnectionOptionNotification(connStatusChan),
+		WithConnectionOptionContext(ctx),
+	)
+
+	// Wait for the initial connection to be established
+	if !ConditionWait(ctx, chCounters.Up.NotZero, DefaultPoll) {
+		t.Fatal("timeout waiting for connection to be ready")
+	}
+
+	if err := rmqc.killConnections(); err != nil {
+		t.Error(err)
+	}
+
+	// Wait for the connection to be down
+	if !ConditionWait(ctx, chCounters.Down.NotZero, ShortPoll) {
+		t.Error("timeout waiting for connection to be down")
+	}
+
+	if !conn.AwaitAvailable(LongPoll.Timeout) {
+		t.Fatal("timeout waiting for connection to recover")
+	}
+}

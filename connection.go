@@ -22,6 +22,21 @@ type Connection struct {
 	connected notifiers.SafeNotifiers // safe notifiers
 }
 
+// RecoveryNotifier returns a channel that will emit the current recovery status
+// each time the connection recovers.
+func (conn *Connection) RecoveryNotifier() *notifiers.SafeNotifiers {
+	return &conn.connected
+}
+
+// AwaitAvailable waits till the connection is esstablised or timeout expires.
+func (conn *Connection) AwaitAvailable(timeout time.Duration) bool {
+	if timeout == 0 {
+		timeout = 7500 * time.Millisecond
+	}
+
+	return conn.connected.AwaitFor(conn.opt.ctx, timeout)
+}
+
 // NewConnection creates a new managed Connection object with the given address, configuration, and option functions.
 //
 // Example Usage:
@@ -160,6 +175,9 @@ func (conn *Connection) manage(config amqp.Config) {
 			time.Sleep(conn.opt.delayer.Delay(3))
 			continue
 		}
+		// delayed considered completion: there might be functionality
+		// depending on notification being setup
+		conn.connected.Broadcast()
 
 		select {
 		case <-conn.opt.ctx.Done():
@@ -235,7 +253,6 @@ func (conn *Connection) rebase(config amqp.Config) bool {
 		result = false
 	} else {
 		conn.baseConn.set(super)
-		conn.connected.Broadcast()
 	}
 
 	Event{
@@ -269,11 +286,4 @@ func (conn *Connection) reconnectLoop(config amqp.Config) bool {
 			return false
 		}
 	}
-}
-
-// RecoveryNotifier returns a channel that will emit the current recovery version
-// each time the connection recovers. Consumers can use this to compare with their
-// previously known version to detect connection recovery.
-func (conn *Connection) RecoveryNotifier() *notifiers.SafeNotifiers {
-	return &conn.connected
 }

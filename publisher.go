@@ -1,7 +1,6 @@
 package grabbit
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -182,40 +181,16 @@ func (p *Publisher) PublishDeferredConfirmWithOptions(opt PublisherOptions, msg 
 }
 
 // Available returns the status of both the underlying connection and channel.
+// (prefer using AwaitAvailable method)
 func (p *Publisher) Available() (bool, bool) {
 	return !p.channel.conn.IsClosed(), !p.channel.IsClosed()
 }
 
-// AwaitAvailable waits till the publisher infrastructure is ready or timeout expires.
-// Useful when the connections and channels are about being created or recovering.
-// When passing zero value parameter the defaults used are 7500ms for timeout and
-// 330 ms for polling frequency.
-func (p *Publisher) AwaitAvailable(timeout, pollFreq time.Duration) bool {
-	if timeout == 0 {
-		timeout = 7500 * time.Millisecond
-	}
-	if pollFreq == 0 {
-		pollFreq = 330 * time.Millisecond
-	}
-
-	d := time.Now().Add(timeout)
-	ctxLocal, cancel := context.WithDeadline(p.channel.opt.ctx, d)
-	defer cancel()
-
-	// status polling
-	ticker := time.NewTicker(pollFreq)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctxLocal.Done():
-			return false
-		case <-ticker.C:
-			if connUp, chanUp := p.Available(); connUp && chanUp {
-				return true
-			}
-		}
-	}
+// AwaitAvailable waits till the publisher's infrastructure is ready or timeout expires.
+// It delegates operation to the  supporting [Channel].
+// (pollFreq is now obsolete)
+func (p *Publisher) AwaitAvailable(timeout time.Duration, pollFreq time.Duration) bool {
+	return p.channel.AwaitAvailable(timeout)
 }
 
 // Close shuts down cleanly the publisher channel.

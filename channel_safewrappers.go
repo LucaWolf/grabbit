@@ -33,13 +33,13 @@ func (ch *Channel) Close() error {
 
 	var err error
 
+	// FIXME await all confirmations
 	if ch.baseChan.super != nil {
-		// TODO It's advisable to wait for all Confirmations to arrive before
-		// calling Channel.Close() or Connection.Close().
 		err = ch.baseChan.super.Close()
 		ch.baseChan.super = nil
 	}
 	ch.opt.cancelCtx()
+	// FIXME consume all confirmations
 
 	return err
 }

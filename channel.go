@@ -3,6 +3,8 @@ package grabbit
 import (
 	"context"
 	"fmt"
+	"notifiers"
+	"time"
 
 	trace "traceutils"
 
@@ -11,11 +13,28 @@ import (
 
 // Channel wraps the base amqp channel by creating a managed channel.
 type Channel struct {
-	baseChan SafeBaseChan   // supporting amqp channel
-	conn     *Connection    // managed connection
-	paused   SafeBool       // flow status when of publisher type
-	opt      ChannelOptions // user parameters
-	queue    string         // currently assigned work queue
+	baseChan  SafeBaseChan            // supporting amqp channel
+	conn      *Connection             // managed connection
+	paused    SafeBool                // flow status when of publisher type
+	opt       ChannelOptions          // user parameters
+	queue     string                  // currently assigned work queue
+	connected notifiers.SafeNotifiers // safe notifiers
+	notifiers persistentNotifiers     // amqp channel operational notifiers
+}
+
+// RecoveryNotifier returns a channel that will emit the current recovery status
+// each time the connection recovers.
+func (ch *Channel) RecoveryNotifier() *notifiers.SafeNotifiers {
+	return &ch.connected
+}
+
+// AwaitAvailable waits till the channel  is established or timeout expires.
+func (ch *Channel) AwaitAvailable(timeout time.Duration) bool {
+	if timeout == 0 {
+		timeout = 7500 * time.Millisecond
+	}
+
+	return ch.connected.AwaitFor(ch.opt.ctx, timeout)
 }
 
 // NewChannel creates a new managed Channel with the given Connection and optional ChannelOptions.
@@ -58,9 +77,10 @@ func NewChannel(conn *Connection, optionFuncs ...func(*ChannelOptions)) *Channel
 	opt.ctx, opt.cancelCtx = context.WithCancel(opt.ctx)
 
 	ch := &Channel{
-		baseChan: SafeBaseChan{},
-		opt:      *opt,
-		conn:     conn,
+		baseChan:  SafeBaseChan{},
+		opt:       *opt,
+		conn:      conn,
+		connected: notifiers.NewSafeNotifiers(),
 	}
 
 	go func() {
@@ -109,39 +129,37 @@ func (ch *Channel) pause(value bool) {
 //
 // Return type: None.
 func (ch *Channel) manage() {
-	var notifiers PersistentNotifiers
 	recovering := true
 
 	for {
 		if recovering {
 			recovering = false
-			notifiers = ch.notifiers()
-			if ch.opt.implParams.IsConsumer {
-				notifiers.Consumer = ch.consumer()
-				go ch.gobble(notifiers.Consumer)
-			}
+			ch.refreshNotifiers()
+			// delayed considered completion: there might be functionality
+			// depending on consuming/publishing notifications being setup
+			ch.connected.Broadcast()
 		}
 
 		select {
 		case <-ch.opt.ctx.Done():
 			ch.Close() // cancelCtx() called again but idempotent
 			return
-		case status := <-notifiers.Flow:
+		case status := <-ch.notifiers.Flow:
 			ch.pause(status)
-		case confirm, notifierStatus := <-notifiers.Published:
+		case confirm, notifierStatus := <-ch.notifiers.Published:
 			if notifierStatus {
 				ch.opt.cbNotifyPublish(confirm, ch)
 			}
-		case msg, notifierStatus := <-notifiers.Returned:
+		case msg, notifierStatus := <-ch.notifiers.Returned:
 			if notifierStatus {
 				ch.opt.cbNotifyReturn(msg, ch)
 			}
-		case err, notifierStatus := <-notifiers.Closed:
+		case err, notifierStatus := <-ch.notifiers.Closed:
 			if !ch.recover(SomeErrFromError(err, err != nil), notifierStatus) {
 				return
 			}
 			recovering = true
-		case reason, notifierStatus := <-notifiers.Cancel:
+		case reason, notifierStatus := <-ch.notifiers.Cancel:
 			if !ch.recover(SomeErrFromString(reason), notifierStatus) {
 				return
 			}
@@ -160,6 +178,7 @@ func (ch *Channel) manage() {
 // Returns:
 //   - a boolean value indicating whether the recovery was successful.
 func (ch *Channel) recover(err OptionalError, notifierStatus bool) bool {
+	ch.connected.Reset()
 	Event{
 		SourceType: CliChannel,
 		SourceName: ch.opt.name,
@@ -185,20 +204,18 @@ func (ch *Channel) recover(err OptionalError, notifierStatus bool) bool {
 	return err.IsSet() && ch.reconnectLoop(true)
 }
 
-// rebase tries to establish a new base channel and returns a boolean indicating success or failure.
+// rebase establishes a new base channel to the AMQP server using the given configuration.
 // It sends en event notification with either EventUp or EventCannotEstablish, depending
 // on the new channel status.
 //
-// It takes a pointer to a Channel struct as a parameter.
-// It returns a boolean value.
+// It returns a boolean value indicating whether the channel was
+// successfully established.
 func (ch *Channel) rebase(retry int) bool {
 	kind := EventUp
 	result := true
 	optError := OptionalError{}
 
-	connStatus := ch.conn.RecoveryNotifier()
-
-	connected := connStatus.AwaitFor(ch.opt.delayer.Delay(retry))
+	connected := ch.conn.AwaitAvailable(ch.opt.delayer.Delay(retry))
 	if !connected {
 		Event{
 			SourceType: CliChannel,

@@ -206,6 +206,12 @@ func TestBatchConsumer(t *testing.T) {
 		}
 	}
 
+	// closing a particular consumer should cleanly redirect the messages to the rest
+	// do we need using Cancel() to guarantee success?
+	victim := consumers[len(consumersAttr)/2]
+	victim.Cancel()
+	victim.Close()
+
 	// ... and get all messages consumed (eventually)
 	if !ConditionWait(ctxMaster, chCounters.DataExhausted.GreaterEquals(len(consumersAttr)), LongPoll) {
 		t.Error("timeout waiting for all consumers to exhaust the queue", chCounters.DataExhausted.Value())
@@ -248,9 +254,10 @@ func TestConsumerExclusive(t *testing.T) {
 	topos := make([]*TopologyOptions, 0, 8)
 	topos = append(topos,
 		&TopologyOptions{
-			Name:    QueueName,
-			Durable: true,
-			Declare: true,
+			Name:      QueueName,
+			Durable:   true,
+			Declare:   true,
+			Exclusive: true,
 		},
 	)
 
@@ -306,9 +313,10 @@ func TestConsumerExclusive(t *testing.T) {
 	// 	WithChannelOptionName("chan.beta"),
 	// 	WithChannelOptionProcessor(MsgHandlerQoS(qosCounter, countAckBeta, CONSUMER_BATCH_SIZE)),
 	// )
-	// if !betaConsumer.AwaitAvailable(30*time.Second, 1*time.Second) {
-	// 	t.Fatal("betaConsumer not ready yet")
+	// if betaConsumer.AwaitAvailable(30*time.Second, 1*time.Second) {
+	// 	t.Fatal("betaConsumer should be in lock/not ready yet state due to alphaConsumer")
 	// }
+	// betaConsumer.Close()
 
 	// push all the messages
 	if _, err := PublishMsgBulkOptions(publisher, optPub, MSG_COUNT, "exch.default"); err != nil {
@@ -476,6 +484,7 @@ func TestConsumerOptions(t *testing.T) {
 	)
 	defer publisher.Close()
 	defer publisher.Channel().QueueDelete(QueueName, false, false, true)
+
 	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
 		t.Fatal("publisher not ready yet")
 	}

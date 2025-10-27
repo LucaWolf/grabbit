@@ -1,6 +1,7 @@
 package notifiers
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -37,7 +38,7 @@ func (s *SafeNotifiers) Broadcast() {
 	s.status = true
 }
 
-// Channel returns the notification channel and version.
+// Channel returns the notification channel and status.
 func (s *SafeNotifiers) Channel() (<-chan struct{}, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -54,7 +55,7 @@ func (s *SafeNotifiers) Status() bool {
 }
 
 // AwaitFor polls for either the channel closed event or timeout expiry.
-func (s *SafeNotifiers) AwaitFor(timeout time.Duration) bool {
+func (s *SafeNotifiers) AwaitFor(ctx context.Context, timeout time.Duration) bool {
 	ch, status := s.Channel() // latest snap shot safe read for ch polling
 
 	if !status {
@@ -62,6 +63,8 @@ func (s *SafeNotifiers) AwaitFor(timeout time.Duration) bool {
 		case <-ch:
 			return true
 		case <-time.After(timeout):
+			return false
+		case <-ctx.Done():
 			return false
 		}
 	}

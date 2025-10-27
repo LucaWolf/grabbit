@@ -237,26 +237,26 @@ func TestPublisherRouting(t *testing.T) {
 	// via direct exchange: these should end up on the QueueAlerts
 	opt.WithExchange(EXCHANGE_LOGS).WithKey(KEY_ALERTS)
 
-	totalAckCount := 0
+	totalAckCount := &SafeCounter{}
 	count, err := PublishMsgBulkOptions(publisher, opt, 5, EXCHANGE_LOGS)
 	if err != nil {
 		t.Error(err)
 	}
-	totalAckCount = totalAckCount + count
+	totalAckCount.Add(count)
 	// via topic exchange: these should also end up on the QueueAlerts
 	opt.WithExchange(EXCHANGE_GATEWAY).WithKey("gw.alerts")
 	count, err = PublishMsgBulkOptions(publisher, opt, 6, EXCHANGE_GATEWAY)
 	if err != nil {
 		t.Error(err)
 	}
-	totalAckCount = totalAckCount + count
+	totalAckCount.Add(count)
 	// via default gateway: straight onto the queue
 	opt.WithExchange("").WithKey(QUEUE_PAGERS)
 	count, err = PublishMsgBulkOptions(publisher, opt, 7, "exch.default")
 	if err != nil {
 		t.Error(err)
 	}
-	totalAckCount = totalAckCount + count
+	totalAckCount.Add(count)
 
 	// these should end up on the QueueInfo
 	opt.WithExchange(EXCHANGE_LOGS).WithKey(KEY_INFO)
@@ -264,34 +264,35 @@ func TestPublisherRouting(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	totalAckCount = totalAckCount + count
+	totalAckCount.Add(count)
 	// these should also end up on the QueueInfo
 	opt.WithExchange(EXCHANGE_GATEWAY).WithKey("gw.info")
 	count, err = PublishMsgBulkOptions(publisher, opt, 4, EXCHANGE_GATEWAY)
 	if err != nil {
 		t.Error(err)
 	}
-	totalAckCount = totalAckCount + count
+	totalAckCount.Add(count)
 	// via default gateway: straight onto the queue
 	opt.WithExchange("").WithKey(QUEUE_EMAILS)
 	count, err = PublishMsgBulkOptions(publisher, opt, 3, "exch.default")
 	if err != nil {
 		t.Error(err)
 	}
-	totalAckCount = totalAckCount + count
+	totalAckCount.Add(count)
 
 	// Prove right all routing on QUEUE_EMAILS and QUEUE_PAGERS
 	// 0.this is an accumulation of all published & ACK-ed messages
-	if totalAckCount != 30 {
-		t.Errorf("expecting 30 messages total sent, got %d", totalAckCount)
+	if totalAckCount.Value() != 30 {
+		t.Errorf("expecting 30 messages total sent, got %d", totalAckCount.Value())
 	}
-	// even if ACK-ed, it still takes a while at engine to transition to "Ready"
-	<-time.After(7 * time.Second)
-	// 1.this is an accumulation of all published and notified messages
-	if totalReadyCounter.Value() != 30 {
+
+	if !ConditionWait(ctxMaster, totalReadyCounter.ValueEquals(30), ShortPoll) {
+		// 1.this is an accumulation of all published and notified messages
 		t.Errorf("expecting 30 messages total sent, got %d", totalReadyCounter.Value())
 	}
 
+	// even if ACK-ed, it still takes a while at engine to transition to "Ready"
+	<-time.After(3500 * time.Millisecond)
 	qPagers, err := rmqc.Cli.GetQueue("/", QUEUE_PAGERS)
 	if err != nil {
 		t.Errorf("rabbithole cannot get queue %s details %v", QUEUE_PAGERS, err)

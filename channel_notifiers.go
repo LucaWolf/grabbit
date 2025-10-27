@@ -1,10 +1,12 @@
 package grabbit
 
-import amqp "github.com/rabbitmq/amqp091-go"
+import (
+	amqp "github.com/rabbitmq/amqp091-go"
+)
 
-// PersistentNotifiers are channels that have the lifespan of the channel. Only
-// need refreshing when recovering.
-type PersistentNotifiers struct {
+// persistentNotifiers are go channels that have the lifespan of the Channel. Only
+// need obtainig once for new amqp channels (like initial setup or recovering).
+type persistentNotifiers struct {
 	Published chan amqp.Confirmation // publishing confirmation
 	Returned  chan amqp.Return       // returned messages
 	Flow      chan bool              // flow control
@@ -13,30 +15,26 @@ type PersistentNotifiers struct {
 	Consumer  <-chan amqp.Delivery   // message intake
 }
 
-// notifiers refreshes the notifiers of a channel and returns the notifier channels.
+// notifiers refreshes the amqp notifiers of a channel.
 // For publisher channels, it sets up notifiers for various events such as channel closure, cancellation, flow control, publishing confirmation,
 // and returned messages. It also calls the Confirm method on baseChan.super to enable publisher confirms.
 // For consumer channels, it calls the consumerSetup function to perform setup actions, and then starts a goroutine to run the consumer.
-//
-// It takes a pointer to a Channel as a parameter and returns PersistentNotifiers.
-func (ch *Channel) notifiers() PersistentNotifiers {
+func (ch *Channel) refreshNotifiers() {
 	ch.baseChan.mu.Lock()
-	defer ch.baseChan.mu.Unlock()
-
-	notifiers := PersistentNotifiers{}
 
 	if ch.baseChan.super != nil {
-		notifiers.Closed = ch.baseChan.super.NotifyClose(make(chan *amqp.Error))
-		notifiers.Cancel = ch.baseChan.super.NotifyCancel(make(chan string))
-
-		// these are publishers specific
+		// common notifiers
+		ch.notifiers.Closed = ch.baseChan.super.NotifyClose(make(chan *amqp.Error))
+		ch.notifiers.Cancel = ch.baseChan.super.NotifyCancel(make(chan string))
+		// publishers specific
 		if ch.opt.implParams.IsPublisher {
-			notifiers.Flow = ch.baseChan.super.NotifyFlow(make(chan bool))
-			notifiers.Published = ch.baseChan.super.NotifyPublish(make(chan amqp.Confirmation, ch.opt.implParams.ConfirmationCount))
-			notifiers.Returned = ch.baseChan.super.NotifyReturn(make(chan amqp.Return))
+			ch.notifiers.Flow = ch.baseChan.super.NotifyFlow(make(chan bool))
+			ch.notifiers.Returned = ch.baseChan.super.NotifyReturn(make(chan amqp.Return))
 
-			// TODO extract this outside the notifiers handler as subsequent step
-			// also make it optional as not all publishers want confirmation mode
+			// make it optional as not all publishers want confirmation mode
+			ch.notifiers.Published = ch.baseChan.super.NotifyPublish(
+				make(chan amqp.Confirmation, ch.opt.implParams.ConfirmationCount),
+			)
 			if err := ch.baseChan.super.Confirm(ch.opt.implParams.ConfirmationNoWait); err != nil {
 				Event{
 					SourceType: CliChannel,
@@ -46,7 +44,11 @@ func (ch *Channel) notifiers() PersistentNotifiers {
 				}.raise(ch.opt.notifier)
 			}
 		}
+		// consumer uses lock wraped operations, release the local lock
+		ch.baseChan.mu.Unlock()
+		if ch.opt.implParams.IsConsumer {
+			ch.notifiers.Consumer = ch.consumer()
+			go ch.gobble(ch.notifiers.Consumer)
+		}
 	}
-
-	return notifiers
 }
