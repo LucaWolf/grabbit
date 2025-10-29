@@ -16,7 +16,7 @@ jobs:
       - name: Tests
         run: go test -race -tags test_env -v ./...
       - name: Coverage report
-        uses: ncruces/go-coverage-report@v0.3.0
+        uses: LucaWolf/go-coverage-report@feat/go-build-tags
         with:
           amend: true
         continue-on-error: true
