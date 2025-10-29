@@ -292,13 +292,13 @@ func TestPublisherRouting(t *testing.T) {
 	}
 
 	// even if ACK-ed, it still takes a while at engine to transition to "Ready"
-	<-time.After(3500 * time.Millisecond)
+	<-time.After(5500 * time.Millisecond)
 	qPagers, err := rmqc.Cli.GetQueue("/", QUEUE_PAGERS)
 	if err != nil {
 		t.Errorf("rabbithole cannot get queue %s details %v", QUEUE_PAGERS, err)
 	}
 	if qPagers.Messages != 18 { // we've sent 5+6+7
-		t.Errorf("expecting 18 messages on %s, got %v", QUEUE_PAGERS, qPagers.Messages)
+		t.Errorf("expecting 18 messages on %s, got %v", QUEUE_PAGERS, qPagers)
 	}
 	// 3. in QUEUE_EMAILS
 	qEmails, err := rmqc.Cli.GetQueue("/", QUEUE_EMAILS)
