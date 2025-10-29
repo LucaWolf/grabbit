@@ -119,6 +119,17 @@ func OnNotifyReturn(counter *SafeCounter) CallbackNotifyReturn {
 	}
 }
 
+func MsgHandlerCount(count *SafeCounter) CallbackProcessMessages {
+	return func(props *DeliveriesProperties, messages []DeliveryData, mustAck bool, ch *Channel) {
+		if mustAck {
+			idxLast := len(messages) - 1
+			lastDeliveryTag := messages[idxLast].DeliveryTag
+			ch.Ack(lastDeliveryTag, true)
+		}
+		count.Add(1)
+	}
+}
+
 // TestPublisherRouting tests routing of messages involving a couple of exchanges
 // and queues bound to both exchanges at different routing keys and topics. The topology is as follows:
 //
@@ -234,7 +245,7 @@ func TestPublisherRouting(t *testing.T) {
 		t.Fatal("publisher not ready yet")
 	}
 
-	// via direct exchange: these should end up on the QueueAlerts
+	// via direct exchange: these should end up on the QUEUE_PAGERS
 	opt.WithExchange(EXCHANGE_LOGS).WithKey(KEY_ALERTS)
 
 	totalAckCount := &SafeCounter{}
@@ -243,7 +254,7 @@ func TestPublisherRouting(t *testing.T) {
 		t.Error(err)
 	}
 	totalAckCount.Add(count)
-	// via topic exchange: these should also end up on the QueueAlerts
+	// via topic exchange: these should also end up on the QUEUE_PAGERS
 	opt.WithExchange(EXCHANGE_GATEWAY).WithKey("gw.alerts")
 	count, err = PublishMsgBulkOptions(publisher, opt, 6, EXCHANGE_GATEWAY)
 	if err != nil {
@@ -257,15 +268,16 @@ func TestPublisherRouting(t *testing.T) {
 		t.Error(err)
 	}
 	totalAckCount.Add(count)
+	expectPagers := 18 // 5+6+7
 
-	// these should end up on the QueueInfo
+	// these should end up on the QUEUE_EMAILS
 	opt.WithExchange(EXCHANGE_LOGS).WithKey(KEY_INFO)
 	count, err = PublishMsgBulkOptions(publisher, opt, 5, EXCHANGE_LOGS)
 	if err != nil {
 		t.Error(err)
 	}
 	totalAckCount.Add(count)
-	// these should also end up on the QueueInfo
+	// these should also end up on the QUEUE_EMAILS
 	opt.WithExchange(EXCHANGE_GATEWAY).WithKey("gw.info")
 	count, err = PublishMsgBulkOptions(publisher, opt, 4, EXCHANGE_GATEWAY)
 	if err != nil {
@@ -279,6 +291,7 @@ func TestPublisherRouting(t *testing.T) {
 		t.Error(err)
 	}
 	totalAckCount.Add(count)
+	expectEmails := 12 // 5+4+3
 
 	// Prove right all routing on QUEUE_EMAILS and QUEUE_PAGERS
 	// 0.this is an accumulation of all published & ACK-ed messages
@@ -292,20 +305,34 @@ func TestPublisherRouting(t *testing.T) {
 	}
 
 	// even if ACK-ed, it still takes a while at engine to transition to "Ready"
-	<-time.After(5500 * time.Millisecond)
-	qPagers, err := rmqc.Cli.GetQueue("/", QUEUE_PAGERS)
-	if err != nil {
-		t.Errorf("rabbithole cannot get queue %s details %v", QUEUE_PAGERS, err)
+	optConsumer := DefaultConsumerOptions()
+
+	// Consume messages from QUEUE_PAGERS
+	pagersReceived := &SafeCounter{}
+	pagersConsumer := NewConsumer(conn,
+		*optConsumer.WithName("consumer.pagers").WithQueue(QUEUE_PAGERS),
+		WithChannelOptionContext(ctxMaster),
+		WithChannelOptionName("chan.pagers"),
+		WithChannelOptionProcessor(MsgHandlerCount(pagersReceived)),
+	)
+	defer pagersConsumer.Close()
+
+	// Consume messages from QUEUE_EMAILS
+	emailsReceived := &SafeCounter{}
+	emailsConsumer := NewConsumer(conn,
+		*optConsumer.WithName("consumer.email").WithQueue(QUEUE_EMAILS),
+		WithChannelOptionContext(ctxMaster),
+		WithChannelOptionName("chan.email"),
+		WithChannelOptionProcessor(MsgHandlerCount(emailsReceived)),
+	)
+	defer emailsConsumer.Close()
+
+	// Wait for consumers to receive messages
+	if !ConditionWait(ctxMaster, pagersReceived.ValueEquals(expectPagers), ShortPoll) {
+		t.Errorf("expecting %d messages on %s, got %d", expectPagers, QUEUE_PAGERS, pagersReceived.Value())
 	}
-	if qPagers.Messages != 18 { // we've sent 5+6+7
-		t.Errorf("expecting 18 messages on %s, got %v", QUEUE_PAGERS, qPagers)
-	}
-	// 3. in QUEUE_EMAILS
-	qEmails, err := rmqc.Cli.GetQueue("/", QUEUE_EMAILS)
-	if err != nil {
-		t.Errorf("rabbithole cannot get queue %s details %v", QUEUE_EMAILS, err)
-	}
-	if qEmails.Messages != 12 { // we've sent 5+4+3
-		t.Errorf("expecting 12 messages on %s, got %v", QUEUE_EMAILS, qEmails)
+
+	if !ConditionWait(ctxMaster, emailsReceived.ValueEquals(expectEmails), ShortPoll) {
+		t.Errorf("expecting %d messages on %s, got %d", expectEmails, QUEUE_EMAILS, emailsReceived.Value())
 	}
 }

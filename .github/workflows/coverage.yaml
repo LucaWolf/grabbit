@@ -1,11 +1,11 @@
-name: Coverage
+name: Test and Coverage
 on:
   push:
     branches: [ master ]
   workflow_dispatch:
 jobs:
-  unix:
-    runs-on: ubuntu-latest
+  test_coverage:
+    runs-on: ubuntu-slim
     steps:
       - uses: actions/checkout@v3
       - name: Set up Go
@@ -13,9 +13,17 @@ jobs:
         with:
           go-version: oldstable
           cache: true
+      - name: Test
+        run: go test -tags test_env -coverprofile coverage.out -v
+        if: |
+          github.event_name == 'push' &&
+          matrix.os == 'ubuntu-slim'
       - name: Coverage report
-        uses: LucaWolf/go-coverage-report@feat/go-build-tags
+        uses: ncruces/go-coverage-report@v0
         with:
           amend: true
-          build-tags: test_env
+          coverage-file: coverage.out
         continue-on-error: true
+        if: |
+          github.event_name == 'push' &&
+          matrix.os == 'ubuntu-slim'
