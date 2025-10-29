@@ -201,7 +201,7 @@ func TestBatchConsumer(t *testing.T) {
 
 	// just to cover the code path of AwaitAvailable
 	for i, c := range consumers {
-		if !c.AwaitAvailable(30*time.Second, 1*time.Second) {
+		if !c.AwaitAvailable(LongPoll.Timeout, 0) {
 			t.Fatalf("consumer [%s] not ready yet", consumersAttr[i].Name)
 		}
 	}
@@ -274,7 +274,7 @@ func TestConsumerExclusive(t *testing.T) {
 		WithChannelOptionTopology(topos),
 	)
 	defer publisher.Channel().QueueDelete(QueueName, false, false, true)
-	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
+	if !publisher.AwaitAvailable(LongPoll.Timeout, 0) {
 		t.Fatal("publisher not ready yet")
 	}
 
@@ -295,7 +295,7 @@ func TestConsumerExclusive(t *testing.T) {
 		WithChannelOptionName("chan.alpha"),
 		WithChannelOptionProcessor(MsgHandlerQoS(qosCounter, countAckAlpha, CONSUMER_BATCH_SIZE)),
 	)
-	if !alphaConsumer.AwaitAvailable(30*time.Second, 1*time.Second) {
+	if !alphaConsumer.AwaitAvailable(LongPoll.Timeout, 0) {
 		t.Fatal("alphaConsumer not ready yet")
 	}
 	// nothing for this guy on the same queue, different connection though
@@ -313,7 +313,7 @@ func TestConsumerExclusive(t *testing.T) {
 	// 	WithChannelOptionName("chan.beta"),
 	// 	WithChannelOptionProcessor(MsgHandlerQoS(qosCounter, countAckBeta, CONSUMER_BATCH_SIZE)),
 	// )
-	// if betaConsumer.AwaitAvailable(30*time.Second, 1*time.Second) {
+	// if betaConsumer.AwaitAvailable(LongPoll.Timeout, 0) {
 	// 	t.Fatal("betaConsumer should be in lock/not ready yet state due to alphaConsumer")
 	// }
 	// betaConsumer.Close()
@@ -468,7 +468,7 @@ func TestConsumerOptions(t *testing.T) {
 		WithChannelOptionProcessor(defaultPayloadProcessor),
 	)
 	// to ensure even distribution must have the consumers ready
-	if !alphaConsumer.AwaitAvailable(30*time.Second, 1*time.Second) {
+	if !alphaConsumer.AwaitAvailable(LongPoll.Timeout, 0) {
 		t.Fatal("alphaConsumer not ready yet")
 	}
 
@@ -485,7 +485,7 @@ func TestConsumerOptions(t *testing.T) {
 	defer publisher.Close()
 	defer publisher.Channel().QueueDelete(QueueName, false, false, true)
 
-	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
+	if !publisher.AwaitAvailable(LongPoll.Timeout, 0) {
 		t.Fatal("publisher not ready yet")
 	}
 	if _, err := PublishMsgBulkOptions(publisher, optPub, MSG_COUNT, "exch.default"); err != nil {

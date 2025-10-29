@@ -1,4 +1,4 @@
-name: Test and coverage
+name: Coverage
 on:
   push:
     branches: [ master ]
@@ -13,10 +13,9 @@ jobs:
         with:
           go-version: oldstable
           cache: true
-      - name: Tests
-        run: go test -race -tags test_env -v ./...
       - name: Coverage report
         uses: LucaWolf/go-coverage-report@feat/go-build-tags
         with:
           amend: true
+          build-tags: test_env
         continue-on-error: true

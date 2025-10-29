@@ -247,7 +247,7 @@ func TestPublisherOptions(t *testing.T) {
 	)
 	defer publisher.Channel().ExchangeDelete(EXCHANGE, IF_UNUSED, DELETE_NOWAIT)
 	defer publisher.Channel().QueueDelete(QueueName, IF_UNUSED, IF_EMPTY, DELETE_NOWAIT)
-	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
+	if !publisher.AwaitAvailable(LongPoll.Timeout, 0) {
 		t.Fatal("publisher not ready yet")
 	}
 
@@ -288,7 +288,10 @@ func TestPublisherOptions(t *testing.T) {
 	if !c.IsClosed() {
 		t.Error("channel should be closed")
 	}
-	//
+
+	// Ideally we'd need a waitUp and waitDown, i.e. a latch.
+	// Currently AwaitFor used by AwaitAvailable only covers the UP case.
+	<-time.After(50 * time.Millisecond) // so give status and/or ctx a chance to kick-in
 	if publisher.AwaitAvailable(0, 0) {
 		t.Error("publisher context should be done")
 	}

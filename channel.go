@@ -64,7 +64,7 @@ func (ch *Channel) AwaitAvailable(timeout time.Duration) bool {
 func NewChannel(conn *Connection, optionFuncs ...func(*ChannelOptions)) *Channel {
 	opt := &ChannelOptions{
 		notifier:          conn.opt.notifier,
-		name:              "default",
+		name:              "chan.default",
 		delayer:           conn.opt.delayer,
 		cbNotifyPublish:   defaultNotifyPublish,
 		cbNotifyReturn:    defaultNotifyReturn,
@@ -80,7 +80,7 @@ func NewChannel(conn *Connection, optionFuncs ...func(*ChannelOptions)) *Channel
 		baseChan:  SafeBaseChan{},
 		opt:       *opt,
 		conn:      conn,
-		connected: notifiers.NewSafeNotifiers(),
+		connected: notifiers.NewSafeNotifiers(opt.name),
 	}
 
 	go func() {
@@ -142,6 +142,7 @@ func (ch *Channel) manage() {
 
 		select {
 		case <-ch.opt.ctx.Done():
+			ch.connected.Reset()
 			ch.Close() // cancelCtx() called again but idempotent
 			return
 		case status := <-ch.notifiers.Flow:

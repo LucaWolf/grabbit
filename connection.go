@@ -59,7 +59,7 @@ func (conn *Connection) AwaitAvailable(timeout time.Duration) bool {
 func NewConnection(address string, config amqp.Config, optionFuncs ...func(*ConnectionOptions)) *Connection {
 	opt := ConnectionOptions{
 		notifier: make(chan Event),
-		name:     "default",
+		name:     "conn.default",
 		delayer:  NewDefaultDelayer(),
 		ctx:      context.Background(),
 	}
@@ -72,7 +72,7 @@ func NewConnection(address string, config amqp.Config, optionFuncs ...func(*Conn
 		baseConn:  SafeBaseConn{},
 		address:   address,
 		opt:       opt,
-		connected: notifiers.NewSafeNotifiers(),
+		connected: notifiers.NewSafeNotifiers(opt.name),
 	}
 
 	go func() {
@@ -181,6 +181,7 @@ func (conn *Connection) manage(config amqp.Config) {
 
 		select {
 		case <-conn.opt.ctx.Done():
+			conn.connected.Reset()
 			conn.Close() // cancelCtx() called again but idempotent
 			return
 		case status := <-evtBlocked:

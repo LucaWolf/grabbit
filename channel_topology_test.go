@@ -80,7 +80,9 @@ func TestChannelTopology(t *testing.T) {
 	// all counters are channels related only
 	go procStatusEvents(ctx, statusCh, chCounters, nil)
 
-	minimalDelayer := tracingDelayer{Value: ShortPoll.Timeout}
+	// we get the EventUp only after con  *and* topologies are done,
+	// so it may take a bit longer than minimal delay
+	chanDelayer := tracingDelayer{Value: DefaultPoll.Timeout}
 	// create the test channel
 	testCh := NewChannel(conn,
 		WithChannelOptionContext(ctx),
@@ -91,15 +93,15 @@ func TestChannelTopology(t *testing.T) {
 		WithChannelOptionDown(connDownCB),
 		WithChannelOptionUp(connUpCB),
 		WithChannelOptionRecovering(connReconnectCB),
-		WithChannelOptionDelay(minimalDelayer),
+		WithChannelOptionDelay(chanDelayer),
 	)
 	defer testCh.ExchangeDelete(EXCHANGE_NOTIFICATIONS, false, true)
 	defer testCh.QueueDelete(QUEUE_EMAILS, false, false, true)
 	defer testCh.QueueDelete(QUEUE_PAGERS, false, false, true)
 
 	// current version of channel recovery awaits connection's signaling completion before
-	// redoing the RMQ channel, subject to its delayer (minimalDelayer in this case)
-	// So no longer getting EventCannotEstablish even for minimum delayers
+	// redoing the RMQ channel, subject to its delayer
+	// So no longer expecting EventCannotEstablish
 	// nonetheless, various callbacks still execute.
 	if !ConditionWait(ctx, recoveringCallbackCounter.NotZero, DefaultPoll) {
 		t.Fatal("timeout waiting for channel to setup/recovery event")
@@ -178,7 +180,8 @@ func TestChannelTopology(t *testing.T) {
 	if !ConditionWait(ctx, chCounters.Down.ValueEquals(1), ShortPoll) {
 		t.Error("timeout waiting for channel to go down")
 	}
-	log.Println("INFO: channel reported DOWN after", time.Since(tConnectionKill))
+	recoveryDelay := time.Since(tConnectionKill)
+	log.Println("INFO: channel reported DOWN after", recoveryDelay)
 
 	if !ConditionWait(ctx, downCallbackCounter.NotZero, ShortPoll) {
 		t.Error("timeout waiting for channel to go down (cb)")
@@ -195,11 +198,20 @@ func TestChannelTopology(t *testing.T) {
 		t.Error("expecting Up count to increase (cb)")
 	}
 
-	// current version of channel recovery awaits connection's signaling completion before redoing the RMQ channel
-	// so no longer getting EventCannotEstablish even for minimum delayers
-	if ConditionWait(ctx, chCounters.BadRecovery.Greater(badRecoveryCountBefore), ShortPoll) {
-		t.Error("expecting failed recovery count to maintain")
+	// channel recovery awaits connection's signaling completion before redoing the RMQ channel
+	// Nonetheless EventCannotEstablish can happen if delayer is exceed by the whole recovery
+	// which is now: conn UP + chann UP + toplogies redeclared
+	if recoveryDelay > chanDelayer.Value {
+		log.Println("Channel took too long to recover on this run!")
+		if !ConditionWait(ctx, chCounters.BadRecovery.Greater(badRecoveryCountBefore), ShortPoll) {
+			t.Error("expecting failed recovery count to increase")
+		}
+	} else {
+		if ConditionWait(ctx, chCounters.BadRecovery.Greater(badRecoveryCountBefore), ShortPoll) {
+			t.Error("expecting failed recovery count to maintain")
+		}
 	}
+
 	if !ConditionWait(ctx, delayerCallbackCounter.Greater(delayerCallbackCounterBefore), DefaultPoll) {
 		t.Error("expecting Recovery count to increase (cb)")
 	}

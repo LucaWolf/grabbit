@@ -230,7 +230,7 @@ func TestPublisherRouting(t *testing.T) {
 	defer publisher.Channel().QueueDelete(QUEUE_PAGERS, false, false, true)
 	defer publisher.Channel().QueueDelete(QUEUE_EMAILS, false, false, true)
 
-	if !publisher.AwaitAvailable(30*time.Second, 1*time.Second) {
+	if !publisher.AwaitAvailable(LongPoll.Timeout, 0) {
 		t.Fatal("publisher not ready yet")
 	}
 

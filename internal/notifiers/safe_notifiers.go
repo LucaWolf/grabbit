@@ -11,24 +11,26 @@ type SafeNotifiers struct {
 	channel chan struct{} // notifies consumers of events
 	mu      sync.RWMutex  // protects channel and version
 	status  bool          // subject of transition to true notification
+	tag     string        // helper for tracing
 }
 
 // NewSafeNotifiers creates a new SafeNotifiers struct.
-func NewSafeNotifiers() SafeNotifiers {
+func NewSafeNotifiers(tag string) SafeNotifiers {
 	return SafeNotifiers{
 		channel: make(chan struct{}),
 		status:  false,
+		tag:     tag,
 	}
 }
 
-// NextVersion increases the notifier's version in preparation for AwaitNextVersion to block on channel events.
+// NextVersion increases the notifier's status in preparation for AwaitFor to block on channel events.
 func (s *SafeNotifiers) Reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.status = false
 }
 
-// Broadcast closes the existing channel and creates a new one, usually follows NextVersion.
+// Broadcast closes the existing channel and creates a new one, usually follows status.
 func (s *SafeNotifiers) Broadcast() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -56,7 +58,7 @@ func (s *SafeNotifiers) Status() bool {
 
 // AwaitFor polls for either the channel closed event or timeout expiry.
 func (s *SafeNotifiers) AwaitFor(ctx context.Context, timeout time.Duration) bool {
-	ch, status := s.Channel() // latest snap shot safe read for ch polling
+	ch, status := s.Channel() // safe read of the latest knonw snap-shot for ch polling
 
 	if !status {
 		select {
