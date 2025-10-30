@@ -180,8 +180,8 @@ func TestChannelTopology(t *testing.T) {
 	if !ConditionWait(ctx, chCounters.Down.ValueEquals(1), ShortPoll) {
 		t.Error("timeout waiting for channel to go down")
 	}
-	recoveryDelay := time.Since(tConnectionKill)
-	log.Println("INFO: channel reported DOWN after", recoveryDelay)
+
+	log.Println("INFO: channel reported DOWN after", time.Since(tConnectionKill))
 
 	if !ConditionWait(ctx, downCallbackCounter.NotZero, ShortPoll) {
 		t.Error("timeout waiting for channel to go down (cb)")
@@ -193,7 +193,8 @@ func TestChannelTopology(t *testing.T) {
 	if !ConditionWait(ctx, chCounters.Up.Greater(upCounterBefore), DefaultPoll) {
 		t.Error("expecting Up count to increase")
 	}
-	log.Println("INFO: channel reported UP after", time.Since(tConnectionKill))
+	recoveryDelay := time.Since(tConnectionKill)
+	log.Println("INFO: channel reported UP after", recoveryDelay)
 	if !ConditionWait(ctx, upCallbackCounter.Greater(upCallbackCounterBefore), ShortPoll) {
 		t.Error("expecting Up count to increase (cb)")
 	}
