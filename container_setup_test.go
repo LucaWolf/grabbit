@@ -58,6 +58,7 @@ func (r RMQC) killConnections() error {
 	// for some reason listing the connections may fail early, try several times
 	var xs []rabbithole.ConnectionInfo
 	var err error
+	delayer := NewDefaultDelayer()
 
 	for i := 0; i < 10; i++ {
 		xs, err = rmqc.Cli.ListConnections()
@@ -68,7 +69,7 @@ func (r RMQC) killConnections() error {
 			log.Println("INFO: RMQ controller listed connections on attempt", i)
 			break
 		}
-		<-time.After(500 * time.Millisecond)
+		<-time.After(delayer.Delay(i))
 	}
 	// still no luck?
 	if len(xs) == 0 {
