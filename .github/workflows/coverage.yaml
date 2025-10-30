@@ -15,15 +15,9 @@ jobs:
           cache: true
       - name: Test
         run: go test -tags test_env -coverprofile coverage.out -v
-        if: |
-          github.event_name == 'push' &&
-          matrix.os == 'ubuntu-slim'
       - name: Coverage report
         uses: ncruces/go-coverage-report@v0
         with:
           amend: true
           coverage-file: coverage.out
         continue-on-error: true
-        if: |
-          github.event_name == 'push' &&
-          matrix.os == 'ubuntu-slim'
