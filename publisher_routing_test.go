@@ -12,7 +12,7 @@ import (
 )
 
 func PublishMsgBulkOptions(pub *Publisher, opt PublisherOptions, records int, tag string) (int, error) {
-	const CONF_DELAY = 7 * time.Second
+	CONF_DELAY := LongPoll.Timeout
 	ackCount := 0
 
 	message := amqp.Publishing{}
@@ -21,9 +21,9 @@ func PublishMsgBulkOptions(pub *Publisher, opt PublisherOptions, records int, ta
 
 	confs := make([]*DeferredConfirmation, records)
 
-	for i := 0; i < records; i++ {
+	for i := range records {
 		buff.Reset()
-		buff.WriteString(fmt.Sprintf("data-%s-%04d", tag, i))
+		fmt.Fprintf(buff, "data-%s-%04d", tag, i)
 		message.Body = buff.Bytes()
 
 		if conf, err := pub.PublishDeferredConfirmWithOptions(opt, message); err != nil {
@@ -32,7 +32,7 @@ func PublishMsgBulkOptions(pub *Publisher, opt PublisherOptions, records int, ta
 			confs[i] = conf
 		}
 	}
-	for i := 0; i < records; i++ {
+	for i := range records {
 		conf := confs[i]
 
 		switch pub.AwaitDeferredConfirmation(conf, CONF_DELAY).Outcome {
