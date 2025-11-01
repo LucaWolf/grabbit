@@ -6,8 +6,7 @@ import (
 	"net/url"
 	"time"
 
-	"notifiers"
-
+	latch "github.com/LucaWolf/go-notifying-latch"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -15,26 +14,26 @@ import (
 // (impl. details: rabbit URL, [ConnectionOptions] and a cancelling context).
 // Applications should obtain a connection using [NewConnection].
 type Connection struct {
-	baseConn  SafeBaseConn            // supporting amqp connection
-	address   string                  // where to connect
-	blocked   SafeBool                // TCP stream status
-	opt       ConnectionOptions       // user parameters
-	connected notifiers.SafeNotifiers // safe notifiers
+	baseConn  SafeBaseConn         // supporting amqp connection
+	address   string               // where to connect
+	blocked   SafeBool             // TCP stream status
+	opt       ConnectionOptions    // user parameters
+	connected latch.NotifyingLatch // safe notifiers
 }
 
 // RecoveryNotifier returns a channel that will emit the current recovery status
 // each time the connection recovers.
-func (conn *Connection) RecoveryNotifier() *notifiers.SafeNotifiers {
+func (conn *Connection) RecoveryNotifier() *latch.NotifyingLatch {
 	return &conn.connected
 }
 
-// AwaitAvailable waits till the connection is esstablised or timeout expires.
+// AwaitAvailable waits till the connection is establised or timeout expires.
 func (conn *Connection) AwaitAvailable(timeout time.Duration) bool {
 	if timeout == 0 {
 		timeout = 7500 * time.Millisecond
 	}
 
-	return conn.connected.AwaitFor(conn.opt.ctx, timeout)
+	return conn.connected.Wait(conn.opt.ctx, false, timeout)
 }
 
 // NewConnection creates a new managed Connection object with the given address, configuration, and option functions.
@@ -72,7 +71,7 @@ func NewConnection(address string, config amqp.Config, optionFuncs ...func(*Conn
 		baseConn:  SafeBaseConn{},
 		address:   address,
 		opt:       opt,
-		connected: notifiers.NewSafeNotifiers(opt.name),
+		connected: latch.NewLatch(true, opt.name),
 	}
 
 	go func() {
@@ -177,11 +176,11 @@ func (conn *Connection) manage(config amqp.Config) {
 		}
 		// delayed considered completion: there might be functionality
 		// depending on notification being setup
-		conn.connected.Broadcast()
+		conn.connected.Unlock()
 
 		select {
 		case <-conn.opt.ctx.Done():
-			conn.connected.Reset()
+			conn.connected.Lock()
 			conn.Close() // cancelCtx() called again but idempotent
 			return
 		case status := <-evtBlocked:
@@ -209,7 +208,7 @@ func (conn *Connection) manage(config amqp.Config) {
 // Returns:
 //   - a boolean indicating if the recovery was successful.
 func (conn *Connection) recover(config amqp.Config, err OptionalError, notifierStatus bool) bool {
-	conn.connected.Reset()
+	conn.connected.Lock()
 	Event{
 		SourceType: CliConnection,
 		SourceName: conn.opt.name,

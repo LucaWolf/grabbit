@@ -15,6 +15,7 @@
 ## Technical Constraints
 
 *   **`amqp091-go` dependency:** The library is built directly on `amqp091-go`, inheriting its API and any underlying limitations.
+*   **`LucaWolf/go-notifying-latch` dependency:** The library use this module for latch type resource access.
 *   **Concurrency Model:** Relies heavily on Go's concurrency model for safe access to shared resources.
 *   **Error Handling:** Go's idiomatic error handling.
 

@@ -4,6 +4,5 @@ toolchain go1.24.2
 
 use (
 	.
-	./internal/notifiers
 	./internal/traceutils
 )

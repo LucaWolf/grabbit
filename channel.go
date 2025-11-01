@@ -3,38 +3,38 @@ package grabbit
 import (
 	"context"
 	"fmt"
-	"notifiers"
 	"time"
 
 	trace "traceutils"
 
+	latch "github.com/LucaWolf/go-notifying-latch"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // Channel wraps the base amqp channel by creating a managed channel.
 type Channel struct {
-	baseChan  SafeBaseChan            // supporting amqp channel
-	conn      *Connection             // managed connection
-	paused    SafeBool                // flow status when of publisher type
-	opt       ChannelOptions          // user parameters
-	queue     string                  // currently assigned work queue
-	connected notifiers.SafeNotifiers // safe notifiers
-	notifiers persistentNotifiers     // amqp channel operational notifiers
+	baseChan  SafeBaseChan         // supporting amqp channel
+	conn      *Connection          // managed connection
+	paused    SafeBool             // flow status when of publisher type
+	opt       ChannelOptions       // user parameters
+	queue     string               // currently assigned work queue
+	connected latch.NotifyingLatch // safe notifiers
+	notifiers persistentNotifiers  // amqp channel operational notifiers
 }
 
 // RecoveryNotifier returns a channel that will emit the current recovery status
 // each time the connection recovers.
-func (ch *Channel) RecoveryNotifier() *notifiers.SafeNotifiers {
+func (ch *Channel) RecoveryNotifier() *latch.NotifyingLatch {
 	return &ch.connected
 }
 
-// AwaitAvailable waits till the channel  is established or timeout expires.
+// AwaitAvailable waits till the channel is established or timeout expires.
 func (ch *Channel) AwaitAvailable(timeout time.Duration) bool {
 	if timeout == 0 {
 		timeout = 7500 * time.Millisecond
 	}
 
-	return ch.connected.AwaitFor(ch.opt.ctx, timeout)
+	return ch.connected.Wait(ch.opt.ctx, false, timeout)
 }
 
 // NewChannel creates a new managed Channel with the given Connection and optional ChannelOptions.
@@ -80,7 +80,7 @@ func NewChannel(conn *Connection, optionFuncs ...func(*ChannelOptions)) *Channel
 		baseChan:  SafeBaseChan{},
 		opt:       *opt,
 		conn:      conn,
-		connected: notifiers.NewSafeNotifiers(opt.name),
+		connected: latch.NewLatch(true, opt.name),
 	}
 
 	go func() {
@@ -137,12 +137,12 @@ func (ch *Channel) manage() {
 			ch.refreshNotifiers()
 			// delayed considered completion: there might be functionality
 			// depending on consuming/publishing notifications being setup
-			ch.connected.Broadcast()
+			ch.connected.Unlock()
 		}
 
 		select {
 		case <-ch.opt.ctx.Done():
-			ch.connected.Reset()
+			ch.connected.Lock()
 			ch.Close() // cancelCtx() called again but idempotent
 			return
 		case status := <-ch.notifiers.Flow:
@@ -179,7 +179,7 @@ func (ch *Channel) manage() {
 // Returns:
 //   - a boolean value indicating whether the recovery was successful.
 func (ch *Channel) recover(err OptionalError, notifierStatus bool) bool {
-	ch.connected.Reset()
+	ch.connected.Lock()
 	Event{
 		SourceType: CliChannel,
 		SourceName: ch.opt.name,

@@ -31,7 +31,7 @@ The core components of the `grabbit` library are designed to abstract away the c
     *   Supports deferred confirmations (`PublishDeferredConfirm`, `AwaitDeferredConfirmation`) to ensure message delivery.
     *   Manages publisher-level options, including routing.
 
-*   **Eventing/Notifiers (`events.go`, `internal/notifiers/safe_notifiers.go`):**
+*   **Eventing/Notifiers (`events.go`):**
     *   Provides a mechanism for the library to submit detailed internal events (e.g., connection/channel recovery, errors) in a non-blocking manner via a buffered channel.
     *   Offers an optional synchronous (blocking) callback mechanism for critical recovery events, allowing user applications to react immediately.
 

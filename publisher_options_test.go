@@ -4,7 +4,6 @@ import (
 	"context"
 	"reflect"
 	"testing"
-	"time"
 
 	trace "traceutils"
 
@@ -289,10 +288,9 @@ func TestPublisherOptions(t *testing.T) {
 		t.Error("channel should be closed")
 	}
 
-	// Ideally we'd need a waitUp and waitDown, i.e. a latch.
-	// Currently AwaitFor used by AwaitAvailable only covers the UP case.
-	<-time.After(50 * time.Millisecond) // so give status and/or ctx a chance to kick-in
-	if publisher.AwaitAvailable(0, 0) {
+	// publisher's channel should be done
+	latch := publisher.Channel().RecoveryNotifier()
+	if !latch.Wait(ctxMaster, true, DefaultPoll.Timeout) {
 		t.Error("publisher context should be done")
 	}
 	// all publishing should fail now with amqp.ErrClosed
