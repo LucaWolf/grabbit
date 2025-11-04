@@ -167,33 +167,55 @@ func (conn *Connection) notificationChannels() (chan *amqp.Error, chan amqp.Bloc
 // It takes a config parameter of type amqp.Config.
 // This function does not return anything.
 func (conn *Connection) manage(config amqp.Config) {
-	for {
-		evtClosed, evtBlocked, err := conn.notificationChannels()
-		if err != nil {
-			// FIXME adopt a circuit breaker policy
-			time.Sleep(conn.opt.delayer.Delay(3))
-			continue
-		}
-		// delayed considered completion: there might be functionality
-		// depending on notification being setup
-		conn.connected.Unlock()
+	var (
+		evtBlocked chan amqp.Blocking
+		evtClosed  chan *amqp.Error
+		err        error
+	)
+	recovering := true
 
-		select {
-		case <-conn.opt.ctx.Done():
-			conn.connected.Lock()
-			conn.Close() // cancelCtx() called again but idempotent
-			return
-		case status := <-evtBlocked:
-			conn.setFlow(status)
-		case err, notifierStatus := <-evtClosed:
-			if !conn.recover(config, SomeErrFromError(err, err != nil), notifierStatus) {
+	for {
+		if recovering {
+			evtClosed, evtBlocked, err = conn.notificationChannels()
+			if err != nil {
+				// FIXME adopt a circuit breaker policy
+				time.Sleep(conn.opt.delayer.Delay(3))
+				continue
+			}
+			// delayed considered completion: there might be functionality
+			// depending on notification being setup
+			conn.connected.Unlock()
+			recovering = false
+		}
+
+		// must wait one of these events
+		for {
+			innerLoop := false
+			select {
+			case <-conn.opt.ctx.Done():
+				conn.connected.Lock()
+				conn.Close() // cancelCtx() called again but idempotent
 				return
+			case status := <-evtBlocked:
+				conn.setFlow(status)
+			case err, notifierStatus := <-evtClosed:
+				if !conn.recover(config, SomeErrFromError(err, err != nil), notifierStatus) {
+					return
+				}
+				recovering = true
+
+			// avoid a hot loop
+			case <-time.After(120 * time.Second):
+				innerLoop = true
+			}
+			if !innerLoop {
+				break
 			}
 		}
 	}
 }
 
-// recover recovers the connection with the specified configuration after an error occurs.
+// recover sets the connection with the specified configuration after an error occured.
 //
 // It raises an event to notify the notifier about the connection going down and checks if the
 // callback is allowed to handle the connection going down. If the notifier status is false, it

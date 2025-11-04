@@ -100,6 +100,18 @@ func MsgHandlerQoS(
 	}
 }
 
+func MsgHandlerSlow(count *SafeCounter, delay time.Duration) CallbackProcessMessages {
+	return func(props *DeliveriesProperties, messages []DeliveryData, mustAck bool, ch *Channel) {
+		count.Add(1)
+		if mustAck {
+			idxLast := len(messages) - 1
+			lastDeliveryTag := messages[idxLast].DeliveryTag
+			ch.Ack(lastDeliveryTag, true)
+		}
+		<-time.After(delay)
+	}
+}
+
 // TestBatchConsumer evaluates if several processing repeats over a broken connection
 // successfully reads all messages, eventually. For this scenario, large batches are split into two parts: one ACKed
 // and the other rejected, randomly selected for ACK-ing. Over several attempts,
@@ -167,7 +179,7 @@ func TestBatchConsumer(t *testing.T) {
 	go HandleMsgRegistry(ctxMaster, registry, validate)
 
 	optConsumer := DefaultConsumerOptions()
-	optConsumer.WithQueue(QueueName).WithPrefetchTimeout(7 * time.Second)
+	optConsumer.WithQueue(QueueName).WithPrefetchTimeout(DefaultPoll.Timeout)
 
 	// start many consumers feeding events into the same pot
 	type ConsumerAttr struct {
@@ -286,7 +298,7 @@ func TestConsumerExclusive(t *testing.T) {
 	optConsumer := DefaultConsumerOptions()
 	optConsumer.
 		WithQueue(QueueName).
-		WithPrefetchTimeout(2 * time.Second).
+		WithPrefetchTimeout(ShortPoll.Timeout).
 		WithPrefetchCount(CONSUMER_BATCH_SIZE)
 
 	// all messages should go here
@@ -303,7 +315,7 @@ func TestConsumerExclusive(t *testing.T) {
 	// optConsumerBeta := DefaultConsumerOptions()
 	// optConsumerBeta.
 	// 	WithQueue(QueueName).
-	// 	WithPrefetchTimeout(2 * time.Second).
+	// 	WithPrefetchTimeout(ShortPoll.Timeout).
 	// 	WithPrefetchCount(CONSUMER_BATCH_SIZE).
 	// 	WithName("consumer.beta").
 	// 	WithExclusive(false)
@@ -450,7 +462,7 @@ func TestConsumerOptions(t *testing.T) {
 	optConsumer := DefaultConsumerOptions()
 	optConsumer.
 		WithQueue(QueueName).
-		WithPrefetchTimeout(3 * time.Second).
+		WithPrefetchTimeout(ShortPoll.Timeout).
 		WithPrefetchCount(PREFETCH_COUNT).
 		WithAutoAck(AUTO_ACK).
 		WithQosGlobal(QOS_GLOBAL).

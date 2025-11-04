@@ -133,38 +133,48 @@ func (ch *Channel) manage() {
 
 	for {
 		if recovering {
-			recovering = false
 			ch.refreshNotifiers()
 			// delayed considered completion: there might be functionality
 			// depending on consuming/publishing notifications being setup
 			ch.connected.Unlock()
+			recovering = false
 		}
 
-		select {
-		case <-ch.opt.ctx.Done():
-			ch.connected.Lock()
-			ch.Close() // cancelCtx() called again but idempotent
-			return
-		case status := <-ch.notifiers.Flow:
-			ch.pause(status)
-		case confirm, notifierStatus := <-ch.notifiers.Published:
-			if notifierStatus {
-				ch.opt.cbNotifyPublish(confirm, ch)
-			}
-		case msg, notifierStatus := <-ch.notifiers.Returned:
-			if notifierStatus {
-				ch.opt.cbNotifyReturn(msg, ch)
-			}
-		case err, notifierStatus := <-ch.notifiers.Closed:
-			if !ch.recover(SomeErrFromError(err, err != nil), notifierStatus) {
+		// must wait one of these events
+		for {
+			innerLoop := false
+			select {
+			case <-ch.opt.ctx.Done():
+				ch.connected.Lock()
+				ch.Close() // cancelCtx() called again but idempotent
 				return
+			case status := <-ch.notifiers.Flow:
+				ch.pause(status)
+			case confirm, notifierStatus := <-ch.notifiers.Published:
+				if notifierStatus {
+					ch.opt.cbNotifyPublish(confirm, ch)
+				}
+			case msg, notifierStatus := <-ch.notifiers.Returned:
+				if notifierStatus {
+					ch.opt.cbNotifyReturn(msg, ch)
+				}
+			case err, notifierStatus := <-ch.notifiers.Closed:
+				if !ch.recover(SomeErrFromError(err, err != nil), notifierStatus) {
+					return
+				}
+				recovering = true
+			case reason, notifierStatus := <-ch.notifiers.Cancel:
+				if !ch.recover(SomeErrFromString(reason), notifierStatus) {
+					return
+				}
+				recovering = true
+			// avoid a hot loop
+			case <-time.After(120 * time.Second):
+				innerLoop = true
 			}
-			recovering = true
-		case reason, notifierStatus := <-ch.notifiers.Cancel:
-			if !ch.recover(SomeErrFromString(reason), notifierStatus) {
-				return
+			if !innerLoop {
+				break
 			}
-			recovering = true
 		}
 	}
 }

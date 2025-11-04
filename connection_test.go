@@ -188,14 +188,14 @@ func TestConnectionCloseContext(t *testing.T) {
 		if !conn.IsClosed() {
 			break
 		}
-		<-time.After(3 * time.Second)
+		<-time.After(ShortPoll.Timeout)
 	}
 	if conn.IsClosed() {
 		t.Fatal("connection should now be open")
 	}
 	// kill connection handler's context
 	cancel()
-	<-time.After(3 * time.Second)
+	<-time.After(ShortPoll.Timeout)
 
 	if !conn.IsClosed() {
 		t.Error("connection should now be closed")
