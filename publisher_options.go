@@ -93,6 +93,7 @@ func (opt *PublisherOptions) WithImmediate(immediate bool) *PublisherOptions {
 }
 
 // WithConfirmationsCount sets the number of confirmations required (capacity of amqp.Confirmation).
+// Pass a zero value to disable the publishing confirmation mechanism.
 // Returns the updated PublisherOptions.
 func (opt *PublisherOptions) WithConfirmationsCount(count int) *PublisherOptions {
 	opt.ConfirmationCount = count

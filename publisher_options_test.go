@@ -2,6 +2,7 @@ package grabbit
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -311,4 +312,96 @@ func TestPublisherOptions(t *testing.T) {
 		t.Error("closed: PublishDeferredConfirmWithOptions failed", err)
 	}
 
+}
+
+func TestPublishNoConfirm(t *testing.T) {
+	QueueName := "workload_publish_no_confirm"
+	const MSG_COUNT = 100
+	statusCh := make(chan Event, MSG_COUNT)
+
+	ctxMaster, ctxCancel := context.WithCancel(context.TODO())
+	defer ctxCancel()
+
+	chCounters := &EventCounters{
+		MsgPublished: &SafeCounter{},
+	}
+	go procStatusEvents(ctxMaster, statusCh, chCounters, &recoveringCallbackCounter)
+
+	conn := NewConnection(
+		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
+		WithConnectionOptionContext(ctxMaster),
+		WithConnectionOptionNotification(statusCh),
+		WithConnectionOptionName("conn.main"),
+	)
+	// connection is up
+	if !conn.AwaitAvailable(DefaultPoll.Timeout) {
+		t.Fatal("timeout waiting for connection to be ready")
+	}
+
+	// massive publishing causes a lot of events.
+	opt := DefaultPublisherOptions()
+	opt.WithKey(QueueName).WithContext(ctxMaster).WithConfirmationsCount(0)
+
+	topos := make([]*TopologyOptions, 0, 8)
+	topos = append(topos, &TopologyOptions{
+		Name:          QueueName,
+		IsDestination: true,
+		Durable:       true,
+		Declare:       true,
+	})
+
+	publisher := NewPublisher(conn, opt,
+		WithChannelOptionName("chan.publisher"),
+		WithChannelOptionTopology(topos),
+		WithChannelOptionNotification(statusCh),
+	)
+	defer publisher.Channel().QueueDelete(QueueName, false, false, true)
+
+	if !publisher.AwaitAvailable(DefaultPoll.Timeout, DefaultPoll.Frequency) {
+		t.Fatal("publisher not ready yet")
+	}
+
+	tag := "no-confirmations"
+	n, err := PublishMsgBulkWith(PublishSimple, publisher, opt, MSG_COUNT, tag)
+	if err != nil {
+		t.Error(err)
+	}
+	if n != MSG_COUNT {
+		t.Error("Incomplete publishing return", n)
+	}
+
+	// NOTE: disabling confirmation channel will also shunt the cbNotifyPublish callback!
+	// No MsgPublished change is expected.
+	if ConditionWait(ctxMaster, chCounters.MsgPublished.Greater(0), ShortPoll) {
+		t.Error("timeout pushing all the messages", chCounters.MsgPublished.Value())
+	}
+
+	batchSelector := NewSafeRand(MSG_COUNT)
+	validate := make(chan DeliveryPayload, MSG_COUNT)
+	registry := NewSafeRegisterMap()
+	go HandleMsgRegistry(ctxMaster, registry, validate)
+
+	optConsumer := DefaultConsumerOptions()
+	optConsumer.WithQueue(QueueName).WithPrefetchTimeout(DefaultPoll.Timeout)
+
+	consumer := NewConsumer(conn, *optConsumer.WithName("consumer.one"),
+		WithChannelOptionName("chan.consumer.one"),
+		WithChannelOptionProcessor(MsgHandlerBulk(batchSelector, validate)),
+		WithChannelOptionNotification(statusCh),
+		WithChannelOptionTopology(topos),
+	)
+
+	if !consumer.AwaitAvailable(DefaultPoll.Timeout, DefaultPoll.Frequency) {
+		t.Fatal("consumer not ready yet")
+	}
+
+	// this also test for messages consistency as the registry map keeps unique entries
+	if !ConditionWait(ctxMaster, registry.ValueEquals(MSG_COUNT), LongVeryFrequentPoll) {
+		t.Errorf("incomplete consumption: expected %d vs. read %d", MSG_COUNT, registry.Length())
+	}
+	// probe for some random value by the publishing schema
+	msg := fmt.Sprintf(PUBLISH_DATA_SCHEMA, tag, batchSelector.ClampInt(MSG_COUNT))
+	if !registry.Has(msg) {
+		t.Error("missing expected value:", msg)
+	}
 }

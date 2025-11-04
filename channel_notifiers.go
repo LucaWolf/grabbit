@@ -21,7 +21,6 @@ type persistentNotifiers struct {
 // For consumer channels, it calls the consumerSetup function to perform setup actions, and then starts a goroutine to run the consumer.
 func (ch *Channel) refreshNotifiers() {
 	ch.baseChan.mu.Lock()
-
 	if ch.baseChan.super != nil {
 		// common notifiers
 		ch.notifiers.Closed = ch.baseChan.super.NotifyClose(make(chan *amqp.Error))
@@ -31,24 +30,26 @@ func (ch *Channel) refreshNotifiers() {
 			ch.notifiers.Flow = ch.baseChan.super.NotifyFlow(make(chan bool))
 			ch.notifiers.Returned = ch.baseChan.super.NotifyReturn(make(chan amqp.Return))
 
-			// make it optional as not all publishers want confirmation mode
-			ch.notifiers.Published = ch.baseChan.super.NotifyPublish(
-				make(chan amqp.Confirmation, ch.opt.implParams.ConfirmationCount),
-			)
-			if err := ch.baseChan.super.Confirm(ch.opt.implParams.ConfirmationNoWait); err != nil {
-				Event{
-					SourceType: CliChannel,
-					SourceName: ch.opt.name,
-					Kind:       EventConfirm,
-					Err:        SomeErrFromError(err, true),
-				}.raise(ch.opt.notifier)
+			// zero channel capacity indicates client disables confirmations
+			if ch.opt.implParams.ConfirmationCount > 0 {
+				ch.notifiers.Published = ch.baseChan.super.NotifyPublish(
+					make(chan amqp.Confirmation, ch.opt.implParams.ConfirmationCount),
+				)
+				if err := ch.baseChan.super.Confirm(ch.opt.implParams.ConfirmationNoWait); err != nil {
+					Event{
+						SourceType: CliChannel,
+						SourceName: ch.opt.name,
+						Kind:       EventConfirm,
+						Err:        SomeErrFromError(err, true),
+					}.raise(ch.opt.notifier)
+				}
 			}
 		}
-		// consumer uses lock wraped operations, release the local lock
-		ch.baseChan.mu.Unlock()
-		if ch.opt.implParams.IsConsumer {
-			ch.notifiers.Consumer = ch.consumer()
-			go ch.gobble(ch.notifiers.Consumer)
-		}
+	}
+	ch.baseChan.mu.Unlock()
+	// consumers specific have own baseChan.super protection
+	if ch.opt.implParams.IsConsumer {
+		ch.notifiers.Consumer = ch.consumer()
+		go ch.gobble(ch.notifiers.Consumer)
 	}
 }

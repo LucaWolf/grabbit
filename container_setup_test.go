@@ -42,7 +42,7 @@ func (r RMQC) awaitRabbitEngine(timeout time.Duration) error {
 	delay := 2000 * time.Millisecond
 	maxRetries := int(timeout / delay)
 
-	for i := 0; i < maxRetries; i++ {
+	for range maxRetries {
 		nd, err = rmqc.Cli.ListNodes()
 		if err == nil {
 			log.Println("RMQ engine: node ", nd[0].Name)
@@ -60,7 +60,7 @@ func (r RMQC) killConnections() error {
 	var err error
 	delayer := NewDefaultDelayer()
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		xs, err = rmqc.Cli.ListConnections()
 		if err != nil {
 			return fmt.Errorf("RMQ controller: list connections %w", err)
@@ -231,6 +231,12 @@ func (r *SafeRand) Int() int {
 	return r.r.Int()
 }
 
+func (r *SafeRand) ClampInt(upper int64) int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.r.Int63n(upper)
+}
+
 // SafeRegisterMap keeps a record of tags that have been registered with no
 // interest in the associated payload.
 type SafeRegisterMap struct {
@@ -261,6 +267,58 @@ func (m *SafeRegisterMap) Length() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.values)
+}
+
+func (m *SafeRegisterMap) IsZero() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.values) == 0
+}
+
+func (m *SafeRegisterMap) ValueEquals(value int) func() bool {
+	return func() bool {
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		return len(m.values) == value
+	}
+}
+
+func (m *SafeRegisterMap) Greater(value int) func() bool {
+	return func() bool {
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		return len(m.values) > value
+	}
+}
+
+func (m *SafeRegisterMap) GreaterEquals(value int) func() bool {
+	return func() bool {
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		return len(m.values) >= value
+	}
+}
+
+func (m *SafeRegisterMap) Less(value int) func() bool {
+	return func() bool {
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		return len(m.values) < value
+	}
+}
+
+func (m *SafeRegisterMap) LessEquals(value int) func() bool {
+	return func() bool {
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		return len(m.values) <= value
+	}
+}
+
+func (m *SafeRegisterMap) NotZero() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.values) != 0
 }
 
 // SafeCounter implements a poor man's semaphore

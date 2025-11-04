@@ -181,7 +181,7 @@ func TestConnectionCloseContext(t *testing.T) {
 	)
 
 	// another way of waiting for the connection to be ready
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		if i == 10 {
 			t.Fatal("timeout waiting for connection to be ready")
 		}

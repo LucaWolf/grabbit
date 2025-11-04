@@ -5,37 +5,75 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
-	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-func PublishMsgBulkOptions(pub *Publisher, opt PublisherOptions, records int, tag string) (int, error) {
-	CONF_DELAY := LongPoll.Timeout
-	ackCount := 0
+const PUBLISH_DATA_SCHEMA = "data-%s-%04d"
 
+type PublishRoutine int
+
+func (r PublishRoutine) RequiresConfirmation() bool {
+	pot := []PublishRoutine{PublishDeferredConfirmWithOptions, PublishDeferredConfirm}
+	return slices.Contains(pot, r)
+}
+
+// publishing routine to use
+const (
+	PublishDeferredConfirmWithOptions PublishRoutine = iota
+	PublishDeferredConfirm
+	PublishSimple
+	PublishWithOptions
+)
+
+func PublishWithRoutine(r PublishRoutine, pub *Publisher, opt PublisherOptions, msg amqp.Publishing) (*DeferredConfirmation, error) {
+	switch r {
+	case PublishDeferredConfirmWithOptions:
+		return pub.PublishDeferredConfirmWithOptions(opt, msg)
+	case PublishDeferredConfirm:
+		return pub.PublishDeferredConfirm(msg)
+	case PublishSimple:
+		return nil, pub.Publish(msg)
+	case PublishWithOptions:
+		return nil, pub.PublishWithOptions(opt, msg)
+	}
+	return nil, errors.New("unssuported PublishRoutine parameter")
+}
+
+func PublishMsgBulkWith(
+	r PublishRoutine,
+	pub *Publisher,
+	opt PublisherOptions,
+	records int,
+	tag string,
+) (int, error) {
 	message := amqp.Publishing{}
 	data := make([]byte, 0, 64)
 	buff := bytes.NewBuffer(data)
 
-	confs := make([]*DeferredConfirmation, records)
+	ackCount := 0
+	confs := make([]*DeferredConfirmation, 0, records)
 
-	for i := range records {
+	for range records {
 		buff.Reset()
-		fmt.Fprintf(buff, "data-%s-%04d", tag, i)
+		fmt.Fprintf(buff, PUBLISH_DATA_SCHEMA, tag, ackCount)
 		message.Body = buff.Bytes()
 
-		if conf, err := pub.PublishDeferredConfirmWithOptions(opt, message); err != nil {
+		if conf, err := PublishWithRoutine(r, pub, opt, message); err != nil {
 			return ackCount, err
-		} else {
-			confs[i] = conf
+		} else if conf != nil {
+			confs = append(confs, conf)
 		}
+		ackCount++
 	}
-	for i := range records {
-		conf := confs[i]
 
-		switch pub.AwaitDeferredConfirmation(conf, CONF_DELAY).Outcome {
+	if r.RequiresConfirmation() {
+		ackCount = 0
+	}
+	for _, conf := range confs {
+		switch pub.AwaitDeferredConfirmation(conf, DefaultPoll.Timeout).Outcome {
 		case ConfirmationPrevious:
 			// log.Printf("\033[91mprevious\033[0m message confirmed request [%04X] vs.response [%04X]. TODO: keep waiting.\n",
 			// 	conf.RequestSequence, conf.DeliveryTag)
@@ -59,52 +97,9 @@ func PublishMsgBulkOptions(pub *Publisher, opt PublisherOptions, records int, ta
 	return ackCount, nil
 }
 
-func PublishMsgBulk(pub *Publisher, records int, tag string) (int, error) {
-	const CONF_DELAY = 7 * time.Second
-	ackCount := 0
-
-	message := amqp.Publishing{}
-	data := make([]byte, 0, 64)
-	buff := bytes.NewBuffer(data)
-
-	confs := make([]*DeferredConfirmation, records)
-
-	for i := 0; i < records; i++ {
-		buff.Reset()
-		buff.WriteString(fmt.Sprintf("data-%s-%04d", tag, i))
-		message.Body = buff.Bytes()
-
-		if conf, err := pub.PublishDeferredConfirm(message); err != nil {
-			return ackCount, err
-		} else {
-			confs[i] = conf
-		}
-	}
-	for i := 0; i < records; i++ {
-		conf := confs[i]
-
-		switch pub.AwaitDeferredConfirmation(conf, CONF_DELAY).Outcome {
-		case ConfirmationPrevious:
-			// log.Printf("\033[91mprevious\033[0m message confirmed request [%04X] vs.response [%04X]. TODO: keep waiting.\n",
-			// 	conf.RequestSequence, conf.DeliveryTag)
-		case ConfirmationDisabled:
-			return ackCount, errors.New("Not in confirmation mode (no DeferredConfirmation available)")
-		case ConfirmationACK:
-			// log.Printf("[%s][%s] \033[92m%s\033[0m with request [%04X] vs. response [%04X]\n",
-			// 	conf.ChannelName, conf.Queue, conf.Outcome, conf.RequestSequence, conf.DeliveryTag,
-			// )
-			ackCount++
-		case ConfirmationNAK:
-			// log.Printf("[%s][%s] \033[91m%s\033[0m with request [%04X] vs. response [%04X]\n",
-			// 	conf.ChannelName, conf.Queue, conf.Outcome, conf.RequestSequence, conf.DeliveryTag,
-			// )
-		default:
-			// log.Printf("[%s][%s] \033[93m%s\033[0m with request [%04X] vs. response [%04X]\n",
-			// 	conf.ChannelName, conf.Queue, conf.Outcome, conf.RequestSequence, conf.DeliveryTag,
-			// )
-		}
-	}
-	return ackCount, nil
+// PublishMsgBulkOptions makes some unique messages and published with options in deferred confirmation mode.
+func PublishMsgBulkOptions(pub *Publisher, opt PublisherOptions, records int, tag string) (int, error) {
+	return PublishMsgBulkWith(PublishDeferredConfirmWithOptions, pub, opt, records, tag)
 }
 
 func OnNotifyPublish(counter *SafeCounter) CallbackNotifyPublish {

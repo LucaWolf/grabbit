@@ -194,7 +194,7 @@ func TestBatchConsumer(t *testing.T) {
 	}
 
 	// sever the link some way through consuming
-	ConditionWait(ctxMaster, func() bool { return registry.Length() >= MSG_COUNT/4 }, LongVeryFrequentPoll)
+	ConditionWait(ctxMaster, registry.GreaterEquals(MSG_COUNT/4), LongVeryFrequentPoll)
 	if err := rmqc.killConnections(); err != nil {
 		t.Error(err)
 	}
