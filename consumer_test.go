@@ -2,6 +2,7 @@ package grabbit
 
 import (
 	"context"
+	"log"
 	"reflect"
 	"testing"
 	"time"
@@ -171,9 +172,9 @@ func TestBatchConsumer(t *testing.T) {
 	if !ConditionWait(ctxMaster, chCounters.MsgPublished.ValueEquals(MSG_COUNT), LongPoll) {
 		t.Error("timeout pushing all the messages", chCounters.MsgPublished.Value())
 	}
+	publisher.Close()
 
-	validate := make(chan DeliveryPayload, 300)
-
+	validate := make(chan DeliveryPayload, 25)
 	batchSelector := NewSafeRand(763482)
 	registry := NewSafeRegisterMap()
 	go HandleMsgRegistry(ctxMaster, registry, validate)
@@ -207,9 +208,10 @@ func TestBatchConsumer(t *testing.T) {
 
 	// sever the link some way through consuming
 	ConditionWait(ctxMaster, registry.GreaterEquals(MSG_COUNT/4), LongVeryFrequentPoll)
-	if err := rmqc.killConnections(); err != nil {
+	if err := rmqc.killConnections(conn.opt.name); err != nil {
 		t.Error(err)
 	}
+	tConnectionKill := time.Now()
 
 	// just to cover the code path of AwaitAvailable
 	for i, c := range consumers {
@@ -217,6 +219,7 @@ func TestBatchConsumer(t *testing.T) {
 			t.Fatalf("consumer [%s] not ready yet", consumersAttr[i].Name)
 		}
 	}
+	log.Println("INFO: channel probed for UP after", time.Since(tConnectionKill))
 
 	// closing a particular consumer should cleanly redirect the messages to the rest
 	// do we need using Cancel() to guarantee success?

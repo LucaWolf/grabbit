@@ -26,7 +26,7 @@ func TestChannelTopology(t *testing.T) {
 	// has no notifications ch consumer.
 	conn := NewConnection(
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
-		WithConnectionOptionName("test.ctx"),
+		WithConnectionOptionName("test.conn.topology"),
 	)
 	defer conn.Close()
 
@@ -171,7 +171,7 @@ func TestChannelTopology(t *testing.T) {
 	delayerCallbackCounterBefore := delayerCallbackCounter.Value()
 	topologyCountBefore := chCounters.Topology.Value()
 
-	if err := rmqc.killConnections(); err != nil {
+	if err := rmqc.killConnections(conn.opt.name); err != nil {
 		t.Error(err)
 	}
 	tConnectionKill := time.Now()
@@ -180,8 +180,7 @@ func TestChannelTopology(t *testing.T) {
 	if !ConditionWait(ctx, chCounters.Down.ValueEquals(1), ShortPoll) {
 		t.Error("timeout waiting for channel to go down")
 	}
-
-	log.Println("INFO: channel reported DOWN after", time.Since(tConnectionKill))
+	log.Println("INFO: channel probed for DOWN after", time.Since(tConnectionKill))
 
 	if !ConditionWait(ctx, downCallbackCounter.NotZero, ShortPoll) {
 		t.Error("timeout waiting for channel to go down (cb)")
@@ -194,7 +193,7 @@ func TestChannelTopology(t *testing.T) {
 		t.Error("expecting Up count to increase")
 	}
 	recoveryDelay := time.Since(tConnectionKill)
-	log.Println("INFO: channel reported UP after", recoveryDelay)
+	log.Println("INFO: channel probed for UP after", recoveryDelay)
 	if !ConditionWait(ctx, upCallbackCounter.Greater(upCallbackCounterBefore), ShortPoll) {
 		t.Error("expecting Up count to increase (cb)")
 	}

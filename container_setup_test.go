@@ -54,7 +54,7 @@ func (r RMQC) awaitRabbitEngine(timeout time.Duration) error {
 	return fmt.Errorf("RMQ controller: node info %w", err)
 }
 
-func (r RMQC) killConnections() error {
+func (r RMQC) killConnections(names ...string) error {
 	// for some reason listing the connections may fail early, try several times
 	var xs []rabbithole.ConnectionInfo
 	var err error
@@ -76,10 +76,17 @@ func (r RMQC) killConnections() error {
 		return errors.New("RMQ controller: no connections")
 	}
 
-	for _, x := range xs {
-		rsp, err := rmqc.Cli.CloseConnection(x.Name)
-		if err != nil {
-			return fmt.Errorf("RMQ controller: close connection %w (%s - %s)", err, x.Name, rsp.Status)
+	for _, name := range names {
+		for _, x := range xs {
+			if n, ok := x.ClientProperties["connection_name"].(string); !ok {
+				continue
+			} else if n == name {
+				rsp, err := rmqc.Cli.CloseConnection(x.Name)
+				if err != nil {
+					return fmt.Errorf("RMQ controller: close connection %w (%s - %s)", err, name, rsp.Status)
+				}
+				log.Println("INFO: RMQ controller force closed:", name, x.Name)
+			}
 		}
 	}
 	return nil

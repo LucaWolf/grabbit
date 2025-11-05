@@ -74,6 +74,14 @@ func NewConnection(address string, config amqp.Config, optionFuncs ...func(*Conn
 		connected: latch.NewLatch(true, opt.name),
 	}
 
+	// overwrite the connection name
+	if len(opt.name) != 0 {
+		if config.Properties == nil {
+			config.Properties = amqp.NewConnectionProperties()
+		}
+		config.Properties.SetClientConnectionName(opt.name)
+	}
+
 	go func() {
 		if !conn.reconnectLoop(config) {
 			// initial connection may fail after rmq established;

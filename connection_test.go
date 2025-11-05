@@ -2,6 +2,7 @@ package grabbit
 
 import (
 	"context"
+	"log"
 	"testing"
 	"time"
 
@@ -296,16 +297,19 @@ func TestConnectionRecoveryNotifier(t *testing.T) {
 		t.Fatal("timeout waiting for connection to be ready")
 	}
 
-	if err := rmqc.killConnections(); err != nil {
+	if err := rmqc.killConnections(conn.opt.name); err != nil {
 		t.Error(err)
 	}
+	tConnectionKill := time.Now()
 
 	// Wait for the connection to be down
 	if !ConditionWait(ctx, chCounters.Down.NotZero, ShortPoll) {
 		t.Error("timeout waiting for connection to be down")
 	}
+	log.Println("INFO: channel probed for DOWN after", time.Since(tConnectionKill))
 
 	if !conn.AwaitAvailable(LongPoll.Timeout) {
 		t.Fatal("timeout waiting for connection to recover")
 	}
+	log.Println("INFO: channel probed for UP after", time.Since(tConnectionKill))
 }
