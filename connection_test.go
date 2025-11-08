@@ -28,13 +28,16 @@ func TestNewConnection(t *testing.T) {
 
 	conn := NewConnection(
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
-		WithConnectionOptionName("test.conn"),
+		WithConnectionOptionName("conn.new"),
 		WithConnectionOptionDown(connDownCB),
 		WithConnectionOptionUp(connUpCB),
 		WithConnectionOptionRecovering(connReconnectCB),
 		WithConnectionOptionNotification(connStatusChan),
 		WithConnectionOptionContext(ctx),
 	)
+	defer AwaitConnectionManagerDone(conn)
+	defer conn.Close()
+
 	// connection is up
 	if !ConditionWait(ctx, chCounters.Up.NotZero, DefaultPoll) {
 		t.Fatal("timeout waiting for connection to be ready")
@@ -82,13 +85,16 @@ func TestConnectionDenyRecovery(t *testing.T) {
 	conn := NewConnection(
 		CONN_ADDR_RMQ_REJECT_PWD,
 		amqp.Config{},
-		WithConnectionOptionName("grabbit-test"),
+		WithConnectionOptionName("conn.deny.recovery"),
 		WithConnectionOptionDown(connDownCB),
 		WithConnectionOptionUp(connUpCB),
 		WithConnectionOptionRecovering(ReattemptingDenied),
 		WithConnectionOptionDelay(delayer),
 		WithConnectionOptionContext(ctx),
 	)
+	defer AwaitConnectionManagerDone(conn)
+	defer conn.Close()
+
 	if !ConditionWait(ctx, recoveringCallbackCounter.Greater(3), LongPoll) {
 		t.Fatal("timeout waiting for final recovery attempt")
 	}
@@ -139,12 +145,15 @@ func TestConnectionDelayerCancelled(t *testing.T) {
 	conn := NewConnection(
 		CONN_ADDR_RMQ_REJECT_PWD,
 		amqp.Config{},
-		WithConnectionOptionName("grabbit-test"),
+		WithConnectionOptionName("conn.delayer.cancelled"),
 		WithConnectionOptionDown(connDownCB),
 		WithConnectionOptionUp(connUpCB),
 		WithConnectionOptionRecovering(ReattemptingCancelsContext(cancel)),
 		WithConnectionOptionContext(ctx),
 	)
+	defer AwaitConnectionManagerDone(conn)
+	defer conn.Close()
+
 	// await connection which should have raised a series of events
 	if !ConditionWait(ctx_conditions, recoveringCallbackCounter.NotZero, LongPoll) {
 		t.Fatal("timeout waiting for connection to recover")
@@ -161,12 +170,12 @@ func TestConnectionDelayerCancelled(t *testing.T) {
 	if !ConditionWait(ctx_conditions, evtNot(conn.Connection().IsSet), DefaultPoll) {
 		t.Fatal("timeout waiting for connection to reset")
 	}
-	// can close several times w/out any repercussions
-	conn.Close()
+
 }
 
 func TestConnectionCloseContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	downCallbackCounter.Reset()
 	upCallbackCounter.Reset()
@@ -174,12 +183,14 @@ func TestConnectionCloseContext(t *testing.T) {
 
 	conn := NewConnection(
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
-		WithConnectionOptionName("grabbit-test"),
+		WithConnectionOptionName("conn.ctx.close"),
 		WithConnectionOptionDown(connDownCB),
 		WithConnectionOptionUp(connUpCB),
 		WithConnectionOptionRecovering(connReconnectCB),
 		WithConnectionOptionContext(ctx),
 	)
+	defer AwaitConnectionManagerDone(conn)
+	defer conn.Close()
 
 	// another way of waiting for the connection to be ready
 	for i := range 10 {
@@ -228,7 +239,6 @@ func TestConnectionCloseContext(t *testing.T) {
 	if recoveringCallbackCounter.Value() == 0 {
 		t.Errorf("recoveringCallback expected some")
 	}
-
 }
 
 func TestConnectionCredentialProvider(t *testing.T) {
@@ -250,14 +260,17 @@ func TestConnectionCredentialProvider(t *testing.T) {
 	}
 
 	// inital PWD is bad but provider takes over during re-attemting
-	NewConnection(
+	conn := NewConnection(
 		CONN_ADDR_RMQ_REJECT_PWD,
 		amqp.Config{},
-		WithConnectionOptionName("grabbit-test"),
+		WithConnectionOptionName("conn.credentials"),
 		WithConnectionOptionPassword(goodPwd),
 		WithConnectionOptionNotification(connStatusChan),
 		WithConnectionOptionContext(ctx),
 	)
+	defer AwaitConnectionManagerDone(conn)
+	defer conn.Close()
+
 	// connection is up
 	if !ConditionWait(ctx, chCounters.Up.NotZero, DefaultPoll) {
 		t.Fatal("timeout waiting for connection to be ready")
@@ -269,7 +282,6 @@ func TestConnectionCredentialProvider(t *testing.T) {
 		t.Errorf("pwdCallback expected %v, got %v", 1, pwdCallbackCounter.Value())
 	}
 }
-
 func TestConnectionRecoveryNotifier(t *testing.T) {
 	connStatusChan := make(chan Event, 32)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -284,13 +296,15 @@ func TestConnectionRecoveryNotifier(t *testing.T) {
 
 	conn := NewConnection(
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
-		WithConnectionOptionName("test.conn"),
+		WithConnectionOptionName("conn.recovery.notice"),
 		WithConnectionOptionDown(connDownCB),
 		WithConnectionOptionUp(connUpCB),
 		WithConnectionOptionRecovering(connReconnectCB),
 		WithConnectionOptionNotification(connStatusChan),
 		WithConnectionOptionContext(ctx),
 	)
+	defer AwaitConnectionManagerDone(conn)
+	defer conn.Close()
 
 	// Wait for the initial connection to be established
 	if !ConditionWait(ctx, chCounters.Up.NotZero, DefaultPoll) {

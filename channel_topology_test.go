@@ -26,13 +26,14 @@ func TestChannelTopology(t *testing.T) {
 	// has no notifications ch consumer.
 	conn := NewConnection(
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
-		WithConnectionOptionName("test.conn.topology"),
+		WithConnectionOptionName("conn.topology"),
 	)
+	defer AwaitConnectionManagerDone(conn)
 	defer conn.Close()
 
 	statusCh := make(chan Event, 5)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel() // 'goleak' would complain w/out final clean-up
+	defer cancel()
 
 	topos := make([]*TopologyOptions, 0, 4)
 	// create an ephemeral 'logs' exchange
@@ -202,7 +203,7 @@ func TestChannelTopology(t *testing.T) {
 	// Nonetheless EventCannotEstablish can happen if delayer is exceed by the whole recovery
 	// which is now: conn UP + chann UP + toplogies redeclared
 	if recoveryDelay > chanDelayer.Value {
-		log.Println("Channel took too long to recover on this run!")
+		log.Println("WARNING: Channel took too long to recover on this run!")
 		if !ConditionWait(ctx, chCounters.BadRecovery.Greater(badRecoveryCountBefore), ShortPoll) {
 			t.Error("expecting failed recovery count to increase")
 		}

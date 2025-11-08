@@ -199,8 +199,10 @@ func TestPublisherOptions(t *testing.T) {
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
 		WithConnectionOptionContext(ctxMaster),
 		WithConnectionOptionNotification(statusCh),
-		WithConnectionOptionName("conn.main"),
+		WithConnectionOptionName("conn.pub.opt"),
 	)
+	defer AwaitConnectionManagerDone(conn)
+	defer conn.Close()
 
 	// we want testing consumers/publishers reliability as soon as
 	// w/out any artificial delay induced by testing the connection up status (tested elsewhere)
@@ -252,17 +254,18 @@ func TestPublisherOptions(t *testing.T) {
 	}
 
 	// all supported publising methods
-	if err := publisher.Publish(amqp.Publishing{Body: []byte("test")}); err != nil {
-		t.Error("Publish failed", err)
+	pubMethods := []PublishRoutine{
+		PublishSimple,
+		PublishWithOptions,
+		PublishDeferredConfirm,
+		PublishDeferredConfirmWithOptions,
 	}
-	if _, err := publisher.PublishDeferredConfirm(amqp.Publishing{Body: []byte("test")}); err != nil {
-		t.Error("PublishDeferredConfirmconfirm failed", err)
-	}
-	if err := publisher.PublishWithOptions(optPub, amqp.Publishing{Body: []byte("test")}); err != nil {
-		t.Error("PublishWithOptions failed", err)
-	}
-	if _, err := publisher.PublishDeferredConfirmWithOptions(optPub, amqp.Publishing{Body: []byte("test")}); err != nil {
-		t.Error("PublishDeferredConfirmWithOptions failed", err)
+	pubCount := 0
+	for i, pubMethods := range pubMethods {
+		if _, err := PublishMsgBulkWith(pubMethods, publisher, optPub, i, pubMethods.String()); err != nil {
+			t.Errorf("%s failed %s\n", pubMethods.String(), err)
+		}
+		pubCount += i
 	}
 
 	// parameters via API match the ones passed to the wrapped channel
@@ -272,15 +275,21 @@ func TestPublisherOptions(t *testing.T) {
 		t.Errorf("Failed -> %v", trace.Err)
 	}
 
-	// general testing the publisher close/cancel/etc.
-	if returnCounter.Value() != 0 {
-		t.Errorf("no publish returns expected, got %d", returnCounter.Value())
+	// we sent (pubCount) immediate with no consumers, expect returns notifications from server
+	if !ConditionWait(ctxMaster, returnCounter.ValueEquals(pubCount), ShortPoll) {
+		t.Errorf("publish returns expected %d, got %d", pubCount, returnCounter.Value())
 	}
 
-	// Closing the channel fails when IMMEDIATE is true
+	// rabbitMQ only: Closing the channel fails when IMMEDIATE is true
+	// exception not_implemented: "immediate=true"
 	if err := publisher.Close(); err != nil {
-		// server raises: exception not_implemented: "immediate=true" :-/
-		// t.Error("Close conn failed", err)
+		t.Error("Close conn failed", err)
+	}
+
+	// publisher's channel should be done
+	latch := publisher.Channel().RecoveryNotifier()
+	if !latch.Wait(ctxMaster, true, LongPoll.Timeout) {
+		t.Error("publisher should be closed")
 	}
 
 	// still have access to the Channel
@@ -289,29 +298,13 @@ func TestPublisherOptions(t *testing.T) {
 		t.Error("channel should be closed")
 	}
 
-	// publisher's channel should be done
-	latch := publisher.Channel().RecoveryNotifier()
-	if !latch.Wait(ctxMaster, true, DefaultPoll.Timeout) {
-		t.Error("publisher context should be done")
-	}
 	// all publishing should fail now with amqp.ErrClosed
-	err := publisher.Publish(amqp.Publishing{Body: []byte("test")})
-	if err != amqp.ErrClosed {
-		t.Error("closed: Publish failed", err)
+	for _, pubMethods := range pubMethods {
+		_, err := PublishMsgBulkWith(pubMethods, publisher, optPub, 1, pubMethods.String())
+		if err != amqp.ErrClosed {
+			t.Errorf("%s should return amqp.ErrClosed %s\n", pubMethods.String(), err)
+		}
 	}
-	_, err = publisher.PublishDeferredConfirm(amqp.Publishing{Body: []byte("test")})
-	if err != amqp.ErrClosed {
-		t.Error("closed: PublishDeferredConfirmconfirm failed", err)
-	}
-	err = publisher.PublishWithOptions(optPub, amqp.Publishing{Body: []byte("test")})
-	if err != amqp.ErrClosed {
-		t.Error("closed: PublishWithOptions failed", err)
-	}
-	_, err = publisher.PublishDeferredConfirmWithOptions(optPub, amqp.Publishing{Body: []byte("test")})
-	if err != amqp.ErrClosed {
-		t.Error("closed: PublishDeferredConfirmWithOptions failed", err)
-	}
-
 }
 
 func TestPublishNoConfirm(t *testing.T) {
@@ -331,8 +324,11 @@ func TestPublishNoConfirm(t *testing.T) {
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
 		WithConnectionOptionContext(ctxMaster),
 		WithConnectionOptionNotification(statusCh),
-		WithConnectionOptionName("conn.main"),
+		WithConnectionOptionName("conn.pub.no.confirm"),
 	)
+	defer AwaitConnectionManagerDone(conn)
+	defer conn.Close()
+
 	// connection is up
 	if !conn.AwaitAvailable(DefaultPoll.Timeout) {
 		t.Fatal("timeout waiting for connection to be ready")

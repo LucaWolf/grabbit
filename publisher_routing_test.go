@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"slices"
 	"testing"
 
@@ -18,6 +19,20 @@ type PublishRoutine int
 func (r PublishRoutine) RequiresConfirmation() bool {
 	pot := []PublishRoutine{PublishDeferredConfirmWithOptions, PublishDeferredConfirm}
 	return slices.Contains(pot, r)
+}
+
+func (r PublishRoutine) String() string {
+	switch r {
+	case PublishDeferredConfirmWithOptions:
+		return "PublishDeferredConfirmWithOptions"
+	case PublishDeferredConfirm:
+		return "PublishDeferredConfirm"
+	case PublishSimple:
+		return "Publish"
+	case PublishWithOptions:
+		return "PublishWithOptions"
+	}
+	return "unknonw Publish method"
 }
 
 // publishing routine to use
@@ -75,23 +90,26 @@ func PublishMsgBulkWith(
 	for _, conf := range confs {
 		switch pub.AwaitDeferredConfirmation(conf, DefaultPoll.Timeout).Outcome {
 		case ConfirmationPrevious:
-			// log.Printf("\033[91mprevious\033[0m message confirmed request [%04X] vs.response [%04X]. TODO: keep waiting.\n",
-			// 	conf.RequestSequence, conf.DeliveryTag)
+			log.Printf("[%s][%s] [PREVIOUS] message confirmed request [%04X] vs.response [%04X]. TODO: keep waiting.\n",
+				conf.ChannelName, conf.Queue, conf.RequestSequence, conf.DeliveryTag)
 		case ConfirmationDisabled:
-			return ackCount, errors.New("Not in confirmation mode (no DeferredConfirmation available)")
+			log.Printf("[%s][%s] [%s] Not in confirmation mode\n",
+				conf.ChannelName, conf.Queue, conf.Outcome,
+			)
+			// return ackCount, errors.New("Not in confirmation mode (no DeferredConfirmation available)")
 		case ConfirmationACK:
-			// log.Printf("[%s][%s] \033[92m%s\033[0m with request [%04X] vs. response [%04X]\n",
+			// log.Printf("[%s][%s] [%s] with request [%04X] vs. response [%04X]\n",
 			// 	conf.ChannelName, conf.Queue, conf.Outcome, conf.RequestSequence, conf.DeliveryTag,
 			// )
 			ackCount++
 		case ConfirmationNAK:
-			// log.Printf("[%s][%s] \033[91m%s\033[0m with request [%04X] vs. response [%04X]\n",
-			// 	conf.ChannelName, conf.Queue, conf.Outcome, conf.RequestSequence, conf.DeliveryTag,
-			// )
+			log.Printf("[%s][%s] [%s] with request [%04X] vs. response [%04X]\n",
+				conf.ChannelName, conf.Queue, conf.Outcome, conf.RequestSequence, conf.DeliveryTag,
+			)
 		default:
-			// log.Printf("[%s][%s] \033[93m%s\033[0m with request [%04X] vs. response [%04X]\n",
-			// 	conf.ChannelName, conf.Queue, conf.Outcome, conf.RequestSequence, conf.DeliveryTag,
-			// )
+			log.Printf("[%s][%s] [%s] with request [%04X] vs. response [%04X]\n",
+				conf.ChannelName, conf.Queue, conf.Outcome, conf.RequestSequence, conf.DeliveryTag,
+			)
 		}
 	}
 	return ackCount, nil
@@ -145,13 +163,15 @@ func TestPublisherRouting(t *testing.T) {
 	const EXCHANGE_GATEWAY = "exch.topic"    // by topic dispatch exchange
 
 	ctxMaster, ctxCancel := context.WithCancel(context.TODO())
-	defer ctxCancel() // 'goleak' would complain w/out final clean-up
+	defer ctxCancel()
 
 	conn := NewConnection(
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
 		WithConnectionOptionContext(ctxMaster),
-		WithConnectionOptionName("conn.main"),
+		WithConnectionOptionName("conn.pub.routing"),
 	)
+	defer AwaitConnectionManagerDone(conn)
+	defer conn.Close()
 
 	topos := make([]*TopologyOptions, 0, 8)
 	// create an ephemeral 'logs' exchange

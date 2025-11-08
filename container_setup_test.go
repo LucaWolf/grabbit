@@ -131,8 +131,11 @@ func (r RMQC) startRabbitEngine() (string, error) {
 	// podman run --rm -d -p 5672:5672 -p 15672:15672 --name some-rabbit
 	out, err := exec.CommandContext(ctx,
 		CONTAINER_ENGINE, "run", "--rm", "-d",
-		"-p=5672:5672", "-p=15672:15672", "--name", "grabbit-test-rmq-engine",
-		"--quiet", "rabbitmq:management").Output()
+		"-p=5672:5672", "-p=15672:15672",
+		"--name", "grabbit-test-rmq-engine",
+		"--quiet",
+		"cloudamqp/lavinmq"). // "rabbitmq:management").
+		Output()
 	if err != nil {
 		return "", err
 	}
@@ -144,6 +147,14 @@ func (r RMQC) stopRabbitEngine(containerId string) error {
 		return err
 	}
 	return nil
+}
+
+// AwaitConnectionManagerDone makes sure the managing goroutine has terminated.
+// Call it at the end of test to make friends with the leak detector (test completion clean-up).
+func AwaitConnectionManagerDone(conn *Connection) {
+	if !ConditionWait(context.Background(), conn.ManagerNotifier().Locked, DefaultPoll) {
+		log.Println("WARNING: Manager still runnig", conn.opt.name)
+	}
 }
 
 func TestMain(m *testing.M) {

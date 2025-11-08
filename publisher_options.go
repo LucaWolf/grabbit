@@ -86,6 +86,7 @@ func (opt *PublisherOptions) WithMandatory(mandatory bool) *PublisherOptions {
 // Returns the updated PublisherOptions.
 //
 // WARNING: True is no longer supported by recent RabbitMQ server.
+// Other engines like LavinMQ (v2.5.1) seem to work fine.
 // (Ref: https://github.com/streadway/amqp/issues/45)
 func (opt *PublisherOptions) WithImmediate(immediate bool) *PublisherOptions {
 	opt.Immediate = immediate

@@ -20,12 +20,17 @@ type Channel struct {
 	queue     string               // currently assigned work queue
 	connected latch.NotifyingLatch // safe notifiers
 	notifiers persistentNotifiers  // amqp channel operational notifiers
+	active    latch.NotifyingLatch // managing goroutine status
 }
 
 // RecoveryNotifier returns a channel that will emit the current recovery status
 // each time the connection recovers.
 func (ch *Channel) RecoveryNotifier() *latch.NotifyingLatch {
 	return &ch.connected
+}
+
+func (ch *Channel) ManagerNotifier() *latch.NotifyingLatch {
+	return &ch.active
 }
 
 // AwaitAvailable waits till the channel is established or timeout expires.
@@ -81,9 +86,13 @@ func NewChannel(conn *Connection, optionFuncs ...func(*ChannelOptions)) *Channel
 		opt:       *opt,
 		conn:      conn,
 		connected: latch.NewLatch(true, opt.name),
+		active:    latch.NewLatch(true, opt.name),
 	}
 
 	go func() {
+		ch.active.Unlock()
+		defer ch.active.Lock()
+
 		if !ch.reconnectLoop(false) {
 			return
 		}
@@ -145,8 +154,8 @@ func (ch *Channel) manage() {
 			innerLoop := false
 			select {
 			case <-ch.opt.ctx.Done():
-				ch.connected.Lock()
 				ch.Close() // cancelCtx() called again but idempotent
+				ch.connected.Lock()
 				return
 			case status := <-ch.notifiers.Flow:
 				ch.pause(status)

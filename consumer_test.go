@@ -46,7 +46,7 @@ func RegisterSlice(messages []DeliveryData, ch chan DeliveryPayload) {
 
 func MsgHandlerBulk(r *SafeRand, chReg chan DeliveryPayload) CallbackProcessMessages {
 	return func(props *DeliveriesProperties, messages []DeliveryData, mustAck bool, ch *Channel) {
-		const FULL_BATCH_ACK_THRESHOLD = 5
+		const FULL_BATCH_ACK_THRESHOLD = 10
 
 		if !mustAck {
 			return
@@ -56,7 +56,7 @@ func MsgHandlerBulk(r *SafeRand, chReg chan DeliveryPayload) CallbackProcessMess
 		pivotDeliveryTag := messages[idxPivot].DeliveryTag
 		lastDeliveryTag := messages[idxLast].DeliveryTag
 
-		if len(messages) < FULL_BATCH_ACK_THRESHOLD {
+		if len(messages) < FULL_BATCH_ACK_THRESHOLD || ch.RecoveryNotifier().Locked() {
 			RegisterSlice(messages, chReg)
 			ch.Ack(lastDeliveryTag, true)
 		} else {
@@ -137,8 +137,11 @@ func TestBatchConsumer(t *testing.T) {
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
 		WithConnectionOptionContext(ctxMaster),
 		WithConnectionOptionNotification(statusCh),
-		WithConnectionOptionName("conn.main"),
+		WithConnectionOptionName("conn.consumer.batch"),
 	)
+	defer AwaitConnectionManagerDone(conn)
+	defer conn.Close()
+
 	// connection is up
 	if !ConditionWait(ctxMaster, chCounters.Up.NotZero, DefaultPoll) {
 		t.Fatal("timeout waiting for connection to be ready")
@@ -207,7 +210,7 @@ func TestBatchConsumer(t *testing.T) {
 	}
 
 	// sever the link some way through consuming
-	ConditionWait(ctxMaster, registry.GreaterEquals(MSG_COUNT/4), LongVeryFrequentPoll)
+	ConditionWait(ctxMaster, registry.GreaterEquals(MSG_COUNT/7), LongVeryFrequentPoll)
 	if err := rmqc.killConnections(conn.opt.name); err != nil {
 		t.Error(err)
 	}
@@ -259,8 +262,11 @@ func TestConsumerExclusive(t *testing.T) {
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
 		WithConnectionOptionContext(ctxMaster),
 		WithConnectionOptionNotification(statusCh),
-		WithConnectionOptionName("conn.main"),
+		WithConnectionOptionName("conn.consumer.excl"),
 	)
+	defer AwaitConnectionManagerDone(conn)
+	defer conn.Close()
+
 	// connection is up
 	if !ConditionWait(ctxMaster, chCounters.Up.NotZero, DefaultPoll) {
 		t.Fatal("timeout waiting for connection to be ready")
@@ -446,8 +452,10 @@ func TestConsumerOptions(t *testing.T) {
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
 		WithConnectionOptionContext(ctxMaster),
 		WithConnectionOptionNotification(statusCh),
-		WithConnectionOptionName("conn.main"),
+		WithConnectionOptionName("conn.consumer.opt"),
 	)
+	defer AwaitConnectionManagerDone(conn)
+	defer conn.Close()
 
 	// we want testing consumers/publishers reliability as soon as
 	// w/out any artificial delay induced by testing the connection up status (tested elsewhere)

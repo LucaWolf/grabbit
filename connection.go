@@ -19,12 +19,17 @@ type Connection struct {
 	blocked   SafeBool             // TCP stream status
 	opt       ConnectionOptions    // user parameters
 	connected latch.NotifyingLatch // safe notifiers
+	active    latch.NotifyingLatch // managing goroutine status
 }
 
 // RecoveryNotifier returns a channel that will emit the current recovery status
 // each time the connection recovers.
 func (conn *Connection) RecoveryNotifier() *latch.NotifyingLatch {
 	return &conn.connected
+}
+
+func (conn *Connection) ManagerNotifier() *latch.NotifyingLatch {
+	return &conn.active
 }
 
 // AwaitAvailable waits till the connection is establised or timeout expires.
@@ -72,6 +77,7 @@ func NewConnection(address string, config amqp.Config, optionFuncs ...func(*Conn
 		address:   address,
 		opt:       opt,
 		connected: latch.NewLatch(true, opt.name),
+		active:    latch.NewLatch(true, opt.name),
 	}
 
 	// overwrite the connection name
@@ -83,6 +89,9 @@ func NewConnection(address string, config amqp.Config, optionFuncs ...func(*Conn
 	}
 
 	go func() {
+		conn.active.Unlock()
+		defer conn.active.Lock()
+
 		if !conn.reconnectLoop(config) {
 			// initial connection may fail after rmq established;
 			if conn.Connection().IsSet() {
@@ -201,8 +210,8 @@ func (conn *Connection) manage(config amqp.Config) {
 			innerLoop := false
 			select {
 			case <-conn.opt.ctx.Done():
-				conn.connected.Lock()
 				conn.Close() // cancelCtx() called again but idempotent
+				conn.connected.Lock()
 				return
 			case status := <-evtBlocked:
 				conn.setFlow(status)

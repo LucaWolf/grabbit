@@ -15,9 +15,10 @@ import (
 func TestContextCancellation(t *testing.T) {
 	conn := NewConnection(
 		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
-		WithConnectionOptionName("test.ctx"),
+		WithConnectionOptionName("conn.ctx"),
 	)
-	defer conn.Close() // 'goleak' would complain w/out final clean-up
+	defer AwaitConnectionManagerDone(conn)
+	defer conn.Close()
 
 	alphaStatusChan := make(chan Event, 5)
 	betaStatusChan := make(chan Event, 5)
