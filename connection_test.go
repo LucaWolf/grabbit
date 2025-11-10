@@ -68,7 +68,7 @@ func TestNewConnection(t *testing.T) {
 			// Is amqp.Connection concurrency safe ?
 			safeBaseConn.Lock()
 			closed := super.IsClosed()
-			safeBaseConn.UnLock()
+			safeBaseConn.Unlock()
 			if closed {
 				t.Error("Connection should not be closed yet", conn.opt.name)
 			}

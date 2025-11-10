@@ -36,8 +36,8 @@ func (c *SafeBaseConn) Lock() {
 	c.mu.Lock()
 }
 
-// UnLock releases the low level connection [Super] lock.
-func (c *SafeBaseConn) UnLock() {
+// Unlock releases the low level connection [Super] lock.
+func (c *SafeBaseConn) Unlock() {
 	c.mu.Unlock()
 }
 

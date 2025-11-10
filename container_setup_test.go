@@ -269,6 +269,19 @@ func NewSafeRegisterMap() *SafeRegisterMap {
 	}
 }
 
+func (m *SafeRegisterMap) Lock() {
+	m.mu.Lock()
+}
+
+func (m *SafeRegisterMap) Unlock() {
+	m.mu.Unlock()
+}
+
+// use this for bulk (loop) operations combined with wraping the loop in lock/unlock
+func (m *SafeRegisterMap) UnsafeSet(tag string, value string) {
+	m.values[tag] = value
+}
+
 func (m *SafeRegisterMap) Set(tag string, value string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -278,6 +291,11 @@ func (m *SafeRegisterMap) Set(tag string, value string) {
 func (m *SafeRegisterMap) Has(tag string) (string, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	value, has := m.values[tag]
+	return value, has
+}
+
+func (m *SafeRegisterMap) UnsafeHas(tag string) (string, bool) {
 	value, has := m.values[tag]
 	return value, has
 }
