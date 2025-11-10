@@ -202,6 +202,14 @@ func (p *Publisher) AwaitStatus(established bool, timeout time.Duration) bool {
 	return p.channel.AwaitStatus(established, timeout)
 }
 
+// AwaitManager waits till the managing goroutine is in the desired state or timeout expires.
+// Provided as a helper tool to confirm the lifespan of the Connection has expired
+// (no goroutine leak) when closed and not usually called from the user application layer.
+// It delegates operation to the supporting [Channel].
+func (p *Publisher) AwaitManager(active bool, timeout time.Duration) bool {
+	return p.channel.AwaitManager(active, timeout)
+}
+
 // Close shuts down cleanly the publisher channel.
 func (p *Publisher) Close() error {
 	return p.channel.Close()

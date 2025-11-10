@@ -83,6 +83,14 @@ func (c *Consumer) AwaitStatus(established bool, timeout time.Duration) bool {
 	return c.channel.AwaitStatus(established, timeout)
 }
 
+// AwaitManager waits till the managing goroutine is in the desired state or timeout expires.
+// Provided as a helper tool to confirm the lifespan of the Connection has expired
+// (no goroutine leak) when closed and not usually called from the user application layer.
+// It delegates operation to the supporting [Channel].
+func (c *Consumer) AwaitManager(active bool, timeout time.Duration) bool {
+	return c.channel.AwaitManager(active, timeout)
+}
+
 // Close shuts down cleanly the consumer channel. If there are other consumers of the same queue,
 // it is advisable to call the `Cancel` method of this consumer beforehand,
 // to let the server know it needs redistributing the messages.
