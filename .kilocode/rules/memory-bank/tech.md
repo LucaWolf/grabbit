@@ -10,7 +10,8 @@
 
 *   **Go Version:** Requires Go 1.21 or higher (implied by `go.mod` and modern Go features).
 *   **Environment:** Standard Go development environment.
-*   **RabbitMQ Instance:** A running RabbitMQ server is required for integration tests and examples. Docker is likely used for local development/testing environments (as suggested by `container_setup_test.go`).
+*   **RabbitMQ Instance:** A running amqp server is required for integration tests and examples. Podman is likely used for local development/testing environments (as suggested by `container_setup_test.go`).
+*   **cloudamqp/lavinmq** Alternative amap server for integration tests and examples. Podman run and managed via `container_setup_test.go`.
 *   **Test setup:** Shared routines and helper concepts and/or objects are defined in `container_setup_test.go`, including
 the TestMain which starts/stops the RabbitMQ srver in a docker container. 
 
