@@ -2,6 +2,7 @@ package grabbit
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"reflect"
 	"testing"
@@ -18,12 +19,12 @@ func RegisterSlice(messages []DeliveryData, registry *SafeRegisterMap, source st
 	for _, msg := range messages {
 		if msg.Redelivered {
 			if origin, has := registry.Has(string(msg.Body)); has {
-				log.Printf(
-					"[DUPLICATE] [%s] from [%s] first by [%s]\n",
-					string(msg.Body),
-					source,
-					origin,
-				)
+				// log.Printf(
+				// 	"[DUPLICATE] [%s] from [%s] first by [%s]\n",
+				// 	string(msg.Body),
+				// 	source,
+				// 	origin,
+				// )
 				_ = origin
 				continue
 			}
@@ -31,7 +32,7 @@ func RegisterSlice(messages []DeliveryData, registry *SafeRegisterMap, source st
 		registry.Set(string(msg.Body), source)
 	}
 	// simulate realisting processing load
-	<-time.After(time.Duration(len(messages)*10) * time.Millisecond)
+	<-time.After(10 * time.Millisecond)
 }
 
 // msgSequential returns true if messages are sequential (same QoS batch)
@@ -54,16 +55,18 @@ func MsgHandlerBulk(r *SafeRand, registry *SafeRegisterMap) CallbackProcessMessa
 	return func(props *DeliveriesProperties, messages []DeliveryData, mustAck bool, ch *Channel) {
 		const FULL_BATCH_ACK_THRESHOLD = 10
 
-		// if !mustAck {
-		// 	log.Println(ch.Name(), "ACK disabled, flush during recovering", len(messages))
-		// 	log.Println(string(messages[0].Body), "->", string(messages[len(messages)-1].Body))
-		// 	return
-		// }
+		if !mustAck {
+			log.Println(ch.Name(), "ACK disabled, flush during recovering", len(messages))
+			log.Println(string(messages[0].Body), "->", string(messages[len(messages)-1].Body))
+			return
+		}
 
 		idxPivot := 2 * len(messages) / 3
 		idxLast := len(messages) - 1
 		pivotDeliveryTag := messages[idxPivot].DeliveryTag
 		lastDeliveryTag := messages[idxLast].DeliveryTag
+		tag, version := ch.connected.Details()
+		taggedSource := fmt.Sprintf("%s_%04d", tag, version)
 
 		// Is it possible the client has successful ACK state but server not?
 		// Duplicate deliveries have been obeserved after link cut-off/recovery.
@@ -71,22 +74,25 @@ func MsgHandlerBulk(r *SafeRand, registry *SafeRegisterMap) CallbackProcessMessa
 		// deduplicate at worker side, like RegisterSlice does
 		if len(messages) < FULL_BATCH_ACK_THRESHOLD {
 			// msgSequential(messages, ch.Name())
-			if err := ch.Ack(lastDeliveryTag, true); err == nil {
-				RegisterSlice(messages, registry, ch.Name())
+			if err := ch.Ack(lastDeliveryTag, true); err == nil &&
+				!ch.IsClosed() {
+				RegisterSlice(messages, registry, taggedSource)
 			}
 		} else {
 			// select one of the halves for Ack-ing and re-enqueue the other
 			if r.Int()%2 == 0 {
 				// msgSequential(messages[:idxPivot+1], ch.Name())
 				if ch.Ack(pivotDeliveryTag, true) == nil &&
-					ch.Nack(lastDeliveryTag, true, true) == nil {
-					RegisterSlice(messages[:idxPivot+1], registry, ch.Name())
+					ch.Nack(lastDeliveryTag, true, true) == nil &&
+					!ch.IsClosed() {
+					RegisterSlice(messages[:idxPivot+1], registry, taggedSource)
 				}
 			} else {
 				// msgSequential(messages[idxPivot+1:], ch.Name())
 				if ch.Nack(pivotDeliveryTag, true, true) == nil &&
-					ch.Ack(lastDeliveryTag, true) == nil {
-					RegisterSlice(messages[idxPivot+1:], registry, ch.Name())
+					ch.Ack(lastDeliveryTag, true) == nil &&
+					!ch.IsClosed() {
+					RegisterSlice(messages[idxPivot+1:], registry, taggedSource)
 				}
 			}
 		}
@@ -199,17 +205,16 @@ func TestBatchConsumer(t *testing.T) {
 	registry := NewSafeRegisterMap()
 
 	// start many consumers feeding events into the same pot
-	delayer := DefaultDelayer{Value: 7 * time.Second, RetryCap: 7}
 	type ConsumerAttr struct {
 		Name          string
 		PrefetchCount int
 	}
 	consumersAttr := []ConsumerAttr{
 		{"one", 8},
-		// {"two", 3},
-		// {"three", 4},
-		// {"four", 7},
-		// {"five", 13},
+		{"two", 3},
+		{"three", 4},
+		{"four", 7},
+		{"five", 13},
 		{"six", 19},
 		{"seven", 21},
 	}
@@ -219,7 +224,7 @@ func TestBatchConsumer(t *testing.T) {
 		optConsumer := DefaultConsumerOptions()
 		opt := optConsumer.
 			WithQueue(QueueName).
-			WithPrefetchTimeout(DefaultPoll.Timeout).
+			WithPrefetchTimeout(ShortPoll.Timeout).
 			WithPrefetchCount(consumerAttr.PrefetchCount).
 			WithName(consumerAttr.Name)
 
@@ -227,7 +232,6 @@ func TestBatchConsumer(t *testing.T) {
 			WithChannelOptionName("chan."+consumerAttr.Name),
 			WithChannelOptionProcessor(MsgHandlerBulk(batchSelector, registry)),
 			WithChannelOptionNotification(statusCh),
-			WithChannelOptionDelay(delayer),
 		)
 		consumers = append(consumers, consumer)
 	}
@@ -239,7 +243,7 @@ func TestBatchConsumer(t *testing.T) {
 	log.Println("INFO: channel(s) probed for initial UP after", time.Since(tConsumerInit))
 
 	// sever the link some way through consuming
-	ConditionWait(ctxMaster, registry.LenGreaterEquals(MSG_COUNT/7), LongVeryFrequentPoll)
+	ConditionWait(ctxMaster, registry.LenGreaterEquals(MSG_COUNT/3), LongVeryFrequentPoll)
 	if err := rmqc.killConnections(conn.opt.name); err != nil {
 		t.Error(err)
 	}
@@ -269,12 +273,12 @@ func TestBatchConsumer(t *testing.T) {
 
 	// closing a particular consumer should cleanly redirect the messages to the rest
 	// do we need using Cancel() to guarantee success?
-	// victim := consumers[len(consumersAttr)/2]
-	// victim.Cancel()
-	// victim.Close()
+	victim := consumers[len(consumersAttr)/2]
+	victim.Cancel()
+	victim.Close()
 
 	// ... and get all messages consumed (eventually) via strict & unique exhaustion tested.
-	if !ConditionWait(ctxMaster, chCounters.DataExhausted.ValueEquals(len(consumersAttr)), LongPoll) {
+	if !ConditionWait(ctxMaster, chCounters.DataExhausted.ValueEquals(len(consumersAttr)-1), LongPoll) {
 		t.Error("timeout waiting for all consumers to exhaust the queue", chCounters.DataExhausted.Value())
 	}
 
