@@ -19,8 +19,8 @@ import (
 	"go.uber.org/goleak"
 )
 
-const CONN_ADDR_RMQ_LOCAL = "amqp://guest:guest@localhost:5672/"
-const CONN_ADDR_RMQ_REJECT_PWD = "amqp://guest:bad_pwd@localhost:5672/"
+const CONN_ADDR_RMQ_LOCAL = "amqp://guest:guest@127.0.0.1:5672/"
+const CONN_ADDR_RMQ_REJECT_PWD = "amqp://guest:bad_pwd@127.0.0.1:5672/"
 const CONTAINER_ENGINE = "podman" // used docker if that's your setup
 
 // RMQC is a globaal external RabbitEngine client for interfacing with the test environment

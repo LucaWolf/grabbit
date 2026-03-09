@@ -1,8 +1,6 @@
 module github.com/LucaWolf/grabbit
 
-go 1.23.0
-
-toolchain go1.24.2
+go 1.25.7
 
 require (
 	github.com/LucaWolf/go-notifying-latch v1.1.0
