@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	trace "traceutils"
+	trace "github.com/LucaWolf/grabbit/internal/traceutils"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )

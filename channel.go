@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	trace "traceutils"
+	trace "github.com/LucaWolf/grabbit/internal/traceutils"
 
 	latch "github.com/LucaWolf/go-notifying-latch"
 	amqp "github.com/rabbitmq/amqp091-go"
