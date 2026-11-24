@@ -140,7 +140,7 @@ None open. Resolved during drafting:
 ### CUJ 1: Parallel processing of a busy queue
 
 *   **Given**: An application builds a consumer with
-    `NewConsumer(conn, DefaultConsumerOptions().WithQueue("jobs").WithPrefetchCount(8), WithProcessorConcurrency(8))`
+    `NewConsumer(conn, DefaultConsumerOptions().WithQueue("jobs").WithPrefetchCount(8).WithProcessorConcurrency(8), WithChannelOptionProcessRecord(processRecord))`
     — using the channel-level builder `WithChannelOptionProcessRecord` — and a
     record callback that decodes, processes, and returns `RecordAck` or
     `RecordNackRequeue`.
@@ -210,7 +210,7 @@ today's loop unchanged, positive spawns the concurrent loop.
 | Addition | Location | Purpose |
 | --- | --- | --- |
 | `ProcessorConcurrency` field | `consumer_options.go` | Concurrency knob, zero = off |
-| `WithProcessorConcurrency(n)` builder | `consumer_options.go` | Two-branch naming convention (plain field keeps its name) |
+| `WithProcessorConcurrency(n) *ConsumerOptions` method | `consumer_options.go` | Fluent builder on the options type; the field rides the usage-params embed |
 | `CallbackProcessRecord` type | `general_options.go` | `func(props *DeliveriesProperties, message DeliveryData) RecordOutcome` |
 | `WithChannelOptionProcessRecord(cb)` builder | `channel_options.go` | Mirrors `WithChannelOptionProcessor` |
 | `RecordOutcome` type + `RecordAck` / `RecordNackRequeue` / `RecordNackDrop` | `general_options.go` + generated stringer | Outcome enum; `RecordNackRequeue` is the zero value (fail-safe: unset outcome redelivers rather than acks) |

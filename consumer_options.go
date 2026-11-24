@@ -11,18 +11,19 @@ import (
 // ConsumerUsageOptions defines parameters for driving the consumers
 // behavior and indicating to the supporting channel to start consuming.
 type ConsumerUsageOptions struct {
-	IsConsumer        bool          // indicates if this chan is used for consuming
-	ConsumerName      string        // chanel wide consumers unique identifier
-	PrefetchTimeout   time.Duration // how long to wait for PrefetchCount messages to arrive
-	PrefetchCount     int           // Qos count
-	PrefetchSize      int           // Qos payload size
-	QosGlobal         bool          // all future channels
-	ConsumerQueue     string        // queue name from which to receive. Overridden by engine assigned name.
-	ConsumerAutoAck   bool          // see [amqp.Consume]
-	ConsumerExclusive bool          // see [amqp.Consume]
-	ConsumerNoLocal   bool          // see [amqp.Consume]
-	ConsumerNoWait    bool          // see [amqp.Consume]
-	ConsumerArgs      amqp.Table    // core properties
+	IsConsumer           bool          // indicates if this chan is used for consuming
+	ConsumerName         string        // chanel wide consumers unique identifier
+	PrefetchTimeout      time.Duration // how long to wait for PrefetchCount messages to arrive
+	PrefetchCount        int           // Qos count
+	PrefetchSize         int           // Qos payload size
+	ProcessorConcurrency int           // >0 per-record dispatch with N workers; 0 or negative = sequential batches
+	QosGlobal            bool          // all future channels
+	ConsumerQueue        string        // queue name from which to receive. Overridden by engine assigned name.
+	ConsumerAutoAck      bool          // see [amqp.Consume]
+	ConsumerExclusive    bool          // see [amqp.Consume]
+	ConsumerNoLocal      bool          // see [amqp.Consume]
+	ConsumerNoWait       bool          // see [amqp.Consume]
+	ConsumerArgs         amqp.Table    // core properties
 }
 
 type ConsumerOptions struct {
@@ -75,6 +76,33 @@ func (opt *ConsumerOptions) WithPrefetchTimeout(timeout time.Duration) *Consumer
 // Returns the updated ConsumerOptions.
 func (opt *ConsumerOptions) WithPrefetchCount(count int) *ConsumerOptions {
 	opt.PrefetchCount = count
+	return opt
+}
+
+// WithProcessorConcurrency switches the consumer channel to per-record
+// concurrent processing with at most count workers.
+//
+// Zero or negative keeps the default sequential batch path unchanged. When
+// positive:
+//   - deliveries are dispatched to workers as they arrive; the batch hook
+//     registered via [WithChannelOptionProcessor] is ignored, and there is no
+//     batch fill, no PrefetchTimeout timer, and no EventDataPartial or
+//     EventDataExhausted events;
+//   - the record callback registered via [WithChannelOptionProcessRecord] runs
+//     once per message and the library settles its [RecordOutcome];
+//   - effective parallelism is min(count, PrefetchCount) under manual
+//     acknowledgments; with [ConsumerOptions.WithAutoAck] the worker pool is the
+//     only bound;
+//   - PrefetchCount <= 0 is unsupported on this path;
+//   - consecutive records may be processed concurrently, so the callback must
+//     be concurrency-safe and must not rely on processing order.
+//
+// WARNING: with the default PrefetchCount of 1 this option is effectively inert
+// (the broker allows only one unacknowledged delivery in flight).
+//
+// Returns the updated ConsumerOptions.
+func (opt *ConsumerOptions) WithProcessorConcurrency(count int) *ConsumerOptions {
+	opt.ProcessorConcurrency = count
 	return opt
 }
 

@@ -142,7 +142,7 @@ owner decision).
     *   `ProcessorConcurrency int` on `ConsumerUsageOptions` (must ride the
         embed — a field on `ConsumerOptions` outside it never reaches the
         channel).
-    *   `WithProcessorConcurrency(n int)` builder; zero/negative = off;
+    *   `WithProcessorConcurrency(n int) *ConsumerOptions` method; zero/negative = off;
         WARNING doc comment (inert at default prefetch 1; `PrefetchTimeout`
         and flush events retire when set; `PrefetchCount ≤ 0` unsupported on
         the concurrent path).
@@ -157,6 +157,9 @@ owner decision).
     guard test passes; doc comments state the combination rules (batch hook
     ignored when knob > 0; record callback unused at 0).
 *   **Notes:** no broker needed.
+*   **Status:** closed 2026-11-24 — field, both builders, `CallbackProcessRecord`,
+    `RecordOutcome` with generated stringer and guard test, builder tests.
+    `go build`, `go vet`, gofmt clean; full and `-race` suites green.
 
 ### T11 — F2: concurrent dispatch machinery
 

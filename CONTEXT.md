@@ -222,9 +222,10 @@ declaration.)
   `multiple=true`; the default publish callback raises `EventMessagePublished` per
   confirmation with `Err` set only on a failed confirmation, while the default return
   callback raises `EventMessageReturned` unconditionally per return.
-- **Stringer guards:** `clienttype_string.go`, `eventtype_string.go`, and
-  `confirmationoutcome_string.go` carry guard arrays that turn enum drift into compile
-  errors (2 `ClientType` values, 15 `EventType` values, 6 `ConfirmationOutcome` values).
+- **Stringer guards:** `clienttype_string.go`, `eventtype_string.go`,
+  `confirmationoutcome_string.go`, and `recordoutcome_string.go` carry guard arrays that turn
+  enum drift into compile errors (2 `ClientType` values, 15 `EventType` values,
+  6 `ConfirmationOutcome` values, 3 `RecordOutcome` values).
 - **Separate connections advised:** `NewConsumer`'s doc comment (consumer.go:51)
   recommends separate connections for publish and consume workloads.
 
