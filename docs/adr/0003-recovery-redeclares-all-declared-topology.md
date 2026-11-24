@@ -21,8 +21,6 @@ should surface loudly. In grabbit the blast radius is contained: topology runs o
 isolated channel, and per-element failures already surface as error events rather than
 aborting the channel's recovery.
 
-**Status**: accepted; implementation pending. The current code deviates — `makeTopology`
-skips durable elements while recovering (`channel.go:336`:
-`if !t.Declare || (recovering && t.Durable) { continue }`). The code-grounded contracts
-(`CONTEXT.md`) describe the code as it exists today; this ADR records the intended
-contract they should converge to.
+**Status**: accepted; implemented. `makeTopology` re-declares every element marked
+`Declare: true` on recovery, durable included; the former skip-durable branch and its
+dead `recovering` parameter are gone.

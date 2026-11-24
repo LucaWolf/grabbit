@@ -25,7 +25,8 @@ func TestContextCancellation(t *testing.T) {
 	// parent context
 	ctxAlpha, ctxAlphaCancel := context.WithCancel(context.Background())
 	// child context
-	ctxBeta, _ := context.WithCancel(ctxAlpha)
+	ctxBeta, ctxBetaCancel := context.WithCancel(ctxAlpha)
+	defer ctxBetaCancel()
 	defer ctxAlphaCancel()
 
 	// events accounting

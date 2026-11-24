@@ -34,15 +34,15 @@ All three constructors accept variadic `WithOptionFunc` to configure the object.
 
 ## Reconnect / Exponential Backoff
 
-- **`DefaultDelayer`** implements exponential backoff with jitter. Starts at 200ms, doubles each retry (capped at 7–10 attempts).
+- **`DefaultDelayer`** implements exponential backoff with jitter. Starts at 200ms, doubles each retry. `RetryCap` (default 7, clamped to 7–10) caps the delay exponent, not the attempt count — retries continue indefinitely until the context is cancelled or a recovery callback vetoes them, with the delay saturating at 12.8s–102.4s depending on the cap.
 - Configure per-connection with `WithConnectionOptionDelay(delayer)` or per-channel with `WithChannelOptionDelay`.
 - The delayer formula: `delay = base * 2^(attempt-1)` with 10% jitter added.
 - Context cancellation (`ctx.Done()`) aborts the reconnect loop — always pass a cancelable context.
 
 ## Topology & Auto-Recovery
 
-- Use **`WithChannelOptionTopology(topology []*TopologyOptions)`** to declare exchanges/queues once; declared elements are re-declared on connection recovery. **Current code caveat:** the implementation (`channel.go:336`) skips elements with `Durable: true` while recovering — a known deviation from the intended recreate-all contract (`docs/adr/0003-recovery-redeclares-all-declared-topology.md`) — so durable elements are only re-declared at initial establishment today.
-- During reconnection, topology is re-declared via `makeTopology(recovering bool)`; `t.Declare` must be true for any declaration (initial or recovery). Per ADR-0003 the intended contract re-declares everything declared — durable elements too, since AMQP declares are idempotent for identical parameters; the skip-durable branch is pending removal.
+- Use **`WithChannelOptionTopology(topology []*TopologyOptions)`** to declare exchanges/queues once; every declared element is re-declared on connection recovery, durable included (AMQP declares are idempotent for identical parameters; a drifted durable definition surfaces as AMQP 406).
+- During reconnection, topology is re-declared via `makeTopology()`; `t.Declare` must be true for any declaration (initial or recovery).
 - Exchanges default to `direct` kind; queues declare with the given args/bindings.
 
 ## Publisher Confirmations & Deferred Confirms

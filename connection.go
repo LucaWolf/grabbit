@@ -199,7 +199,14 @@ func (conn *Connection) manage(config amqp.Config) {
 			evtClosed, evtBlocked, err = conn.notificationChannels()
 			if err != nil {
 				// FIXME adopt a circuit breaker policy
-				time.Sleep(conn.opt.delayer.Delay(3))
+				// Interruptible retry: cancellation always exits the manage loop.
+				// A bare sleep here would spin forever when the context is
+				// cancelled while the base connection is unset (see ADR-0006).
+				if !delayerCompleted(conn.opt.ctx, conn.opt.delayer, 3) {
+					conn.Close() // cancelCtx() called again but idempotent
+					conn.connected.Lock()
+					return
+				}
 				continue
 			}
 			// delayed considered completion: there might be functionality

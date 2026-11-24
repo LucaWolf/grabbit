@@ -2,8 +2,8 @@
 
 Every managed client (connection, channel, publisher, consumer) starts a background
 recovery loop at construction and supervises its own AMQP resource for the rest of its
-life: initial establishment, reconnection, listener re-registration, and ephemeral
-topology re-declaration. There is no Start/Stop pair — a client's lifecycle ends only
+life: initial establishment, reconnection, listener re-registration, and topology
+re-declaration. There is no Start/Stop pair — a client's lifecycle ends only
 through context cancellation or its idempotent `Close`, so code that constructs one
 must own one of those two shutdown paths.
 

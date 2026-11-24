@@ -30,7 +30,7 @@ What I'd like this library to provide is:
   - [x] replace the internal logging with an alternative. Current thought is to have some
       buffered channel over which detailed events are submitted (non-blocking)
   - [x] have the topology defined by consumers and publishers. Once when creating and then
-      during channels recovery (ephemeral queues/exchanges only)
+      during channels recovery (durable and ephemeral queues/exchanges)
   - [x] provide an optional callback to the caller space during recoveries. This supplements
      in a synchronous (blocking) mode the logging replacement mechanism.
   - [x] awaiting confirmation of the published events via deferred methods (PublishDeferredConfirm

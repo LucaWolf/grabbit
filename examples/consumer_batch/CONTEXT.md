@@ -123,16 +123,13 @@ configuration is hardcoded:
   `ctx.Done()` (or channel close). `main`'s final `muReg.Lock()` is therefore guaranteed to be
   free thanks to the `ctxCancel()` + 3 s wait that precede it.
 - **Topology declaration semantics:** the queue `workload` has `Declare: true`, so grabbit
-  declares it at initial channel establishment (`makeTopology(false)` via
-  `NewChannel` → `reconnectLoop(false)`, `channel.go:97-105, 299`). During *recovery*, the
-  current code skips elements with `Durable: true` (`channel.go:336`: `if !t.Declare || (recovering &&
-  t.Durable) { continue }`), so the durable queue is *not* re-declared. **This is a known
-  deviation from the intended contract** ([ADR-0003: recovery re-declares all declared
-  topology](../../docs/adr/0003-recovery-redeclares-all-declared-topology.md)): the demo's own
-  closing comment ("we should get all the topology recreated when … recovery has completed")
-  states the intent, and AMQP declares are idempotent for identical parameters, so
-  re-declaring is safe. Until the fix lands, the queue is only available after recovery if
-  the broker kept its durable definitions (a fully reset broker would lose it).
+  declares it at initial channel establishment (`makeTopology()` via
+  `NewChannel` → `reconnectLoop()`, `channel.go:101, 296`). During *recovery*, every declared
+  element is re-declared, durable included
+  ([ADR-0003: recovery re-declares all declared topology](../../docs/adr/0003-recovery-redeclares-all-declared-topology.md));
+  the demo's own closing comment ("we should get all the topology recreated when … recovery has
+  completed") matches that behavior. AMQP declares are idempotent for identical parameters, so
+  the durable queue is recreated even after a fully reset broker.
 - **Transient messages do not survive broker restarts:** published `amqp.Publishing{}` values
   leave DeliveryMode unset (non-persistent), so a broker restart mid-run drops undelivered
   messages; the final 500-message report can then legitimately report missing ACKs.

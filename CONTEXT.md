@@ -17,7 +17,8 @@ grabbit turns raw amqp091-go connections and channels into **managed objects** t
 survive broker outages. Each of the four constructors (`NewConnection`, `NewPublisher`,
 `NewConsumer`, `NewChannel`) returns an object owning a background recovery goroutine;
 the goroutine re-dials / re-opens the underlying AMQP resource with exponential backoff,
-re-registers AMQP notifier channels, re-declares non-durable topology, and reports
+re-registers AMQP notifier channels, re-declares declared topology (durable and
+ephemeral), and reports
 every lifecycle transition both through optional user callbacks (Down / Recovering,
 which can veto further retries by returning `false`, plus the no-return Up) and through
 a lossy `chan Event` notification channel. State is tracked with `NotifyingLatch`
@@ -173,13 +174,13 @@ declaration.)
   `ConfirmationACK`, else `ConfirmationNAK`.
 - **Publish preconditions:** `Publisher.Publish*` check `channel.IsClosed()` first and
   short-circuit with `amqp.ErrClosed` without touching the base channel.
-- **Topology lifecycle:** an element is declared only when `Declare: true`. **During
-  recovery, elements with `Durable: true` are currently skipped** (`channel.go:336`:
-  `if !t.Declare || (recovering && t.Durable) { continue }`) — only non-durable declared
-  elements are re-declared on reconnect. That skip is a **known deviation from
-  ADR-0003** ([recovery re-declares all declared topology](./docs/adr/0003-recovery-redeclares-all-declared-topology.md)):
-  the intended contract re-declares durable elements too (idempotent at the server),
-  pending an implementation fix. Topology runs on an isolated short-lived channel (amqp
+- **Topology lifecycle:** an element is declared only when `Declare: true`. Every
+  declared element is (re-)declared on recovery, durable and ephemeral alike
+  ([ADR-0003](./docs/adr/0003-recovery-redeclares-all-declared-topology.md)):
+  AMQP declarations are idempotent for identical parameters, so re-declaring is safe
+  and covers a broker that lost durable definitions. A drifted durable definition
+  surfaces as an AMQP 406 precondition failure instead of silently continuing.
+  Topology runs on an isolated short-lived channel (amqp
   channels are not safe to share); an empty `Kind` defaults to `"direct"` (mutating the
   caller's `TopologyOptions` in place); a queue declaring with an empty returned name is
   an error.
@@ -188,9 +189,13 @@ declaration.)
   `false` aborts the loop. `recover()` reconnects only when the close error `IsSet()`
   (a graceful close terminates); a consumer-Cancel notification always re-enters the
   reconnect loop. The retry counter wraps modulo 0xFFFF. On notifier-acquisition
-  failure both manage loops sleep a hard-coded `delayer.Delay(3)` backoff
-  (`connection.go:202`, `channel.go:159`) and re-arm a 120-second anti-hot-loop
+  failure the connection's manage loop waits an interruptible `delayer.Delay(3)`
+  backoff (`connection.go`, `delayerCompleted`) so cancellation always exits; the
+  channel's manage loop waits a flat `delayer.Delay(3)` (`channel.go:159`) after its
+  own context-aware `recover` call. Both re-arm a 120-second anti-hot-loop
   `time.After` timer per iteration (`connection.go:229`, `channel.go:197`).
+  `RetryCap` clamps the delay exponent, not the attempt count
+  (see [ADR-0006](./docs/adr/0006-connection-notifier-retry-is-interruptible.md)).
 - **Events are lossy:** `raise` uses a non-blocking send with `default` — events are
   silently dropped when the user's notification channel buffer is full.
 - **`AwaitStatus` is the supported state probe:** the connected latches track state
@@ -208,14 +213,15 @@ declaration.)
 - **Raw access contract:** `SafeBaseChan.Super()` / `SafeBaseConn.Super()` only briefly
   RLock; direct amqp use must be bracketed with the provided `Lock/Unlock` (or
   `RLock/RUnlock`) or recovery is locked out.
-- **Constructor appends:** `NewPublisher`/`NewConsumer` append
-  `WithChannelOptionUsageParams` **after** the caller's option funcs — with spare
-  capacity in the caller's variadic slice this can write into its backing array.
+- **Constructor appends:** `NewPublisher`/`NewConsumer` copy the caller's option funcs
+  before appending `WithChannelOptionUsageParams` **after** them, so the caller-owned
+  variadic backing array is never mutated; usage params stay last so they override any
+  user-supplied ones.
 - **Default callbacks:** the default processor discards message bodies (raises
   `EventMessageReceived`) and, when `mustAck`, acks only the last delivery tag with
-  `multiple=true`; the default publish/return callbacks raise `EventMessagePublished` /
-  `EventMessageReturned` unconditionally per confirmation/return (flagged FIXME: does
-  not branch on `confirm.Ack`).
+  `multiple=true`; the default publish callback raises `EventMessagePublished` per
+  confirmation with `Err` set only on a failed confirmation, while the default return
+  callback raises `EventMessageReturned` unconditionally per return.
 - **Stringer guards:** `clienttype_string.go`, `eventtype_string.go`, and
   `confirmationoutcome_string.go` carry guard arrays that turn enum drift into compile
   errors (2 `ClientType` values, 15 `EventType` values, 6 `ConfirmationOutcome` values).
@@ -233,7 +239,7 @@ declaration.)
   user's `SecretProvider.Password()` and rewrites the connection address.
 - **In-place mutations of caller-owned values:** the `amqp.Config` passed to
   `NewConnection` (client connection name is set on it), `TopologyOptions.Kind`
-  (defaulted to `"direct"`), the variadic option-func backing array (see above), and
+  (defaulted to `"direct"`), and
   `DeferredConfirmation.Outcome` (set by `AwaitDeferredConfirmation` before return).
 - **Locking / latches:** `sync.RWMutex` on `SafeBaseConn`/`SafeBaseChan`;
   `NotifyingLatch` Lock/Unlock notifies the go-notifying-latch watchers.
@@ -269,12 +275,11 @@ declaration.)
 - The `test_env` build tag is part of the testing contract: CI runs
   `go test -tags test_env ...`, and trace instrumentation is a no-op in production
   builds. Trace-sensitive tests fail without it.
-- Topology durability is a cross-boundary semantic with a known code/doc gap: the
-  current code re-declares only non-durable elements on recovery, while
-  [ADR-0003](./docs/adr/0003-recovery-redeclares-all-declared-topology.md) records the
-  accepted contract — re-declare everything declared, durable included (safe: AMQP
-  declares are idempotent for identical parameters). Until the code converges, a broker
-  that loses durable definitions leaves durable topology missing after recovery.
+- Topology durability is a cross-boundary semantic: the code re-declares every
+  declared element on recovery, durable included, per
+  [ADR-0003](./docs/adr/0003-recovery-redeclares-all-declared-topology.md) — safe
+  because AMQP declares are idempotent for identical parameters. A drifted durable
+  definition fails loudly with AMQP 406 rather than being silently reused.
 - Notification events are advisory, not reliable: every component drops events on full
   buffers. Never build correctness-critical logic on `chan Event` delivery alone.
 - Consumer acknowledgments are manual by default (`ConsumerAutoAck=false`) everywhere,

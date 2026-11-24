@@ -40,10 +40,10 @@ speaks). Step by step, `main.go`:
 
 Intended live drill: restart RabbitMQ while the demo runs — the durable queue `workload`
 survives the restart server-side, so consuming resumes after recovery. The closing comment in
-`main.go` describes the topology as "recreated" — which matches the *intended* contract
-([ADR-0003: recovery re-declares all declared topology](../../docs/adr/0003-recovery-redeclares-all-declared-topology.md)) —
-but the current code **skips durable elements** during recovery (`channel.go:336`), a known
-deviation pending fix.
+`main.go` describes the topology as "recreated", matching the contract
+([ADR-0003: recovery re-declares all declared topology](../../docs/adr/0003-recovery-redeclares-all-declared-topology.md)):
+on recovery every declared element is re-declared, durable included, so even a fully reset
+broker gets the queue recreated.
 
 ## Interface
 
@@ -112,10 +112,9 @@ checkout**, never the published pseudo-version. `.gitignore` ignores the compile
   channels on it (publisher + two consumers); auto-reconnects with the library's
   exponential-backoff `DefaultDelayer` while `ctxMaster` is alive.
 - **Broker topology:** declares the durable queue `workload` on the publisher channel and both
-  consumer channels at initial establishment; during connection recovery the current code skips
-  durable elements (`channel.go:336`; known deviation — see ADR-0003) — the queue persists
-  server-side, so a normal broker restart leaves it in place (a fully reset broker would lose it
-  until the intended recreate-all fix lands).
+  consumer channels at initial establishment; on every recovery all declared elements are
+  re-declared, durable included (ADR-0003) — a normal broker restart leaves the queue in place
+  and a fully reset broker gets it recreated.
 - **Message flow:** publishes 35 messages (`test number 0000`…`test number 0034`, set as the `Body`
   of a zero-value `amqp.Publishing{}` — no persistence flags or headers) to the default exchange
   with routing key `workload`; the two consumers pull them with random `Ack` vs
@@ -162,5 +161,5 @@ go run .
 
 Expected behavior: ~35 messages cycling between `consumer.one` and `consumer.two` (roughly half
 NACKed and requeued), ending with `EXIT` after `Ctrl-C`. Restarting the broker mid-run exercises
-the recovery callbacks; the durable queue survives server-side (the current code skips durable
-elements during recovery, `channel.go:336` — intended to change per ADR-0003).
+the recovery callbacks; the durable queue survives server-side and is re-declared on recovery
+per ADR-0003.

@@ -429,7 +429,7 @@ func TestConsumerOptions(t *testing.T) {
 	ARG := make(amqp.Table)
 	ARG["foo"] = "bar"
 
-	statusCh := make(chan Event, 16)
+	statusCh := make(chan Event, 2*MSG_COUNT)
 
 	validators := []trace.TraceValidator{
 		{

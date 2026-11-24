@@ -29,7 +29,10 @@ type DefaultDelayer struct {
 	RetryCap int
 }
 
-// NewDefaultDelayer creates a DefaultDelayer with base 200ms and retry cap of 7 attempts
+// NewDefaultDelayer creates a DefaultDelayer with base 200ms and a retry cap of 7.
+// RetryCap clamps the delay exponent, never the attempt count: attempts stay
+// unbounded until the context is cancelled or a callback vetoes recovery, while
+// the delay saturates at base * 2^(cap-1).
 func NewDefaultDelayer() DefaultDelayer {
 	return DefaultDelayer{
 		Value:    200 * time.Millisecond,

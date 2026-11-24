@@ -53,7 +53,10 @@ func NewConsumer(conn *Connection, opt ConsumerOptions, optionFuncs ...func(*Cha
 	useParams := ChanUsageParameters{
 		ConsumerUsageOptions: opt.ConsumerUsageOptions,
 	}
-	chanOpt := append(optionFuncs, WithChannelOptionUsageParams(useParams))
+	// copy first so the caller-owned variadic backing array is never mutated;
+	// usage params stay last so they override any user-supplied ones.
+	chanOpt := append(append([]func(*ChannelOptions){}, optionFuncs...),
+		WithChannelOptionUsageParams(useParams))
 
 	return &Consumer{
 		channel: NewChannel(conn, chanOpt...),
