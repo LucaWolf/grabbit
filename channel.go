@@ -94,6 +94,13 @@ func NewChannel(conn *Connection, optionFuncs ...func(*ChannelOptions)) *Channel
 		paused:    latch.NewLatch(false, opt.name), // active by default
 	}
 
+	// The record callback receives no channel handle, so the fallback needs the
+	// channel receiver to raise its event. A user callback set via
+	// WithChannelOptionProcessRecord is kept.
+	if ch.opt.cbProcessRecord == nil {
+		ch.opt.cbProcessRecord = ch.defaultRecordProcessor
+	}
+
 	go func() {
 		ch.managed.Unlock()
 		defer ch.managed.Lock()

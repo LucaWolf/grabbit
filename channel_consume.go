@@ -1,6 +1,7 @@
 package grabbit
 
 import (
+	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -120,5 +121,105 @@ func (ch *Channel) gobble(consumer <-chan amqp.Delivery) {
 				Kind:       kind,
 			}.raise(ch.opt.notifier)
 		}
+	}
+}
+
+// gobbleRecords runs the per-record concurrent dispatch loop for one recovery
+// generation.
+//
+// It spawns ProcessorConcurrency workers that pull deliveries directly from the
+// AMQP feed (no dispatcher goroutine and no internal work channel), then joins
+// the pool before returning. Workers exit on feed close (generation end) or
+// context cancellation, between records. Recovery does not cancel the channel
+// context, so feed close is the normal generation-end signal; in-flight user
+// code is never aborted.
+func (ch *Channel) gobbleRecords(consumer <-chan amqp.Delivery) {
+	workers := ch.opt.implParams.ProcessorConcurrency
+	if workers <= 0 {
+		return
+	}
+
+	var pool sync.WaitGroup
+	pool.Add(workers)
+	for range workers {
+		go func() {
+			defer pool.Done()
+			ch.recordWorker(consumer)
+		}()
+	}
+
+	// "gobble returned implies no outstanding user code" holds, delayed by at
+	// most one record per worker.
+	pool.Wait()
+}
+
+// recordWorker is one worker of the per-record pool. It selects on exactly the
+// deliveries feed and context cancellation; there is no timer arm on this path.
+func (ch *Channel) recordWorker(consumer <-chan amqp.Delivery) {
+	for {
+		select {
+		case <-ch.opt.ctx.Done():
+			return
+		case msg, ok := <-consumer:
+			if !ok {
+				return
+			}
+
+			// Snapshot the generation before running user code: a transition that
+			// lands while the record is being processed must prevent the settle
+			// from hitting the new channel.
+			_, transitions := ch.connected.Details()
+
+			props := DeliveryPropsFrom(&msg)
+			message := DeliveryDataFrom(&msg)
+
+			process := ch.opt.cbProcessRecord
+			if process == nil {
+				process = ch.defaultRecordProcessor
+			}
+			outcome := process(&props, message)
+
+			ch.settleRecord(message.DeliveryTag, outcome, transitions)
+		}
+	}
+}
+
+// settleRecord is the single place that executes a record outcome on the wire.
+//
+// Ack-worthiness is re-derived per record from ConsumerAutoAck (nothing sticky
+// crosses records). The connected latch is then re-checked without blocking: if
+// the channel is down, or its transition counter moved past the record's
+// generation, the wire call is skipped and the record is left unacknowledged for
+// redelivery. The one tolerated step is the establishment Unlock, which can land
+// between a delivery being pulled and its settle: snapshot values are even before
+// establishment and odd once connected, so exactly one even->odd step is the
+// same generation still coming up.
+//
+// Exactly one of Ack(tag,false) / Nack(tag,false,true) / Nack(tag,false,false)
+// is issued. A Reject would be wire-equivalent to the drop Nack and is
+// deliberately not a third path. The TOCTOU window between this check and the
+// wire call stays narrowed, not closed (see ADR-0008).
+func (ch *Channel) settleRecord(tag uint64, outcome RecordOutcome, transitions uint64) {
+	if ch.opt.implParams.ConsumerAutoAck {
+		return
+	}
+	if ch.connected.Locked() {
+		return
+	}
+	if _, current := ch.connected.Details(); current != transitions {
+		// Allow only the establishment step for a record pulled while the latch
+		// was still locked; any other change means a different generation.
+		if transitions%2 != 0 || current != transitions+1 {
+			return
+		}
+	}
+
+	switch outcome {
+	case RecordAck:
+		_ = ch.Ack(tag, false)
+	case RecordNackDrop:
+		_ = ch.Nack(tag, false, false)
+	default: // RecordNackRequeue and any unknown outcome fail safe
+		_ = ch.Nack(tag, false, true)
 	}
 }

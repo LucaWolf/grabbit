@@ -608,3 +608,89 @@ func TestConsumerOptions(t *testing.T) {
 		t.Error("consumer should be done/closed")
 	}
 }
+
+// TestConcurrentConsumerRecordDispatch is the T11 tracer bullet: a concurrent
+// consumer processes records individually, settles each one, and never arms the
+// sequential flush timer.
+func TestConcurrentConsumerRecordDispatch(t *testing.T) {
+	QueueName := "workload_consumer_concurrent"
+	const MSG_COUNT = 24
+	const PREFETCH_COUNT = 4
+	const WORKERS = 2
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	statusCh := make(chan Event, 128)
+	chCounters := &EventCounters{
+		Up:            &SafeCounter{},
+		DataExhausted: &SafeCounter{},
+	}
+	go procStatusEvents(ctx, statusCh, chCounters, nil)
+
+	conn := NewConnection(
+		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
+		WithConnectionOptionContext(ctx),
+		WithConnectionOptionNotification(statusCh),
+		WithConnectionOptionName("conn.consumer.concurrent"),
+	)
+	defer AwaitConnectionManagerDone(conn)
+	defer conn.Close()
+
+	topos := []*TopologyOptions{{
+		Name:          QueueName,
+		Durable:       true,
+		Declare:       true,
+		IsDestination: true,
+	}}
+
+	registry := NewSafeRegisterMap()
+	optConsumer := DefaultConsumerOptions()
+	optConsumer.
+		WithQueue(QueueName).
+		WithPrefetchCount(PREFETCH_COUNT).
+		WithProcessorConcurrency(WORKERS)
+
+	consumer := NewConsumer(conn, optConsumer,
+		WithChannelOptionName("chan.concurrent"),
+		WithChannelOptionTopology(topos),
+		WithChannelOptionProcessRecord(func(props *DeliveriesProperties, message DeliveryData) RecordOutcome {
+			registry.Set(string(message.Body), "record")
+			return RecordAck
+		}),
+	)
+	defer consumer.Channel().QueueDelete(QueueName, false, false, true)
+	defer consumer.Close()
+
+	if !consumer.AwaitStatus(true, LongPoll.Timeout) {
+		t.Fatal("concurrent consumer not ready")
+	}
+
+	optPub := DefaultPublisherOptions()
+	optPub.WithKey(QueueName).WithContext(ctx)
+	publisher := NewPublisher(conn, optPub, WithChannelOptionName("chan.concurrent.publisher"))
+	defer publisher.Close()
+	if !publisher.AwaitStatus(true, LongPoll.Timeout) {
+		t.Fatal("publisher not ready")
+	}
+	if _, err := PublishMsgBulkOptions(publisher, optPub, MSG_COUNT, "exch.concurrent"); err != nil {
+		t.Error(err)
+	}
+
+	if !ConditionWait(ctx, registry.LenEquals(MSG_COUNT), LongPoll) {
+		t.Fatalf("timeout processing records: %d/%d", registry.Length(), MSG_COUNT)
+	}
+
+	// The concurrent path has no batch-fill timer and must not raise flush events.
+	if got := chCounters.DataExhausted.Value(); got != 0 {
+		t.Errorf("concurrent path raised %d EventDataExhausted events, want 0", got)
+	}
+
+	// Closing the consumer must let the manager exit.
+	if err := consumer.Close(); err != nil {
+		t.Errorf("consumer close: %v", err)
+	}
+	if !consumer.AwaitManager(false, DefaultPoll.Timeout) {
+		t.Error("consumer manager did not exit after Close")
+	}
+}

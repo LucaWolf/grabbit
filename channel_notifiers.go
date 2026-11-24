@@ -53,7 +53,13 @@ func (ch *Channel) refreshNotifiers() error {
 		if ch.notifiers.Consumer, err = ch.consumer(); err != nil {
 			return err
 		}
-		go ch.gobble(ch.notifiers.Consumer)
+		// The dispatch model is fixed at construction: zero or negative keeps the
+		// sequential batch loop unchanged; positive selects per-record workers.
+		if ch.opt.implParams.ProcessorConcurrency > 0 {
+			go ch.gobbleRecords(ch.notifiers.Consumer)
+		} else {
+			go ch.gobble(ch.notifiers.Consumer)
+		}
 	}
 	return nil
 }

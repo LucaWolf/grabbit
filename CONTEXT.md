@@ -217,11 +217,14 @@ declaration.)
   before appending `WithChannelOptionUsageParams` **after** them, so the caller-owned
   variadic backing array is never mutated; usage params stay last so they override any
   user-supplied ones.
-- **Default callbacks:** the default processor discards message bodies (raises
-  `EventMessageReceived`) and, when `mustAck`, acks only the last delivery tag with
-  `multiple=true`; the default publish callback raises `EventMessagePublished` per
-  confirmation with `Err` set only on a failed confirmation, while the default return
-  callback raises `EventMessageReturned` unconditionally per return.
+- **Default callbacks:** the default batch processor discards message bodies and, when
+  `mustAck`, acks only the last delivery tag with `multiple=true`, raising
+  `EventMessageReceived` with `Err` set only if that ack fails; the default record
+  processor (concurrent path) returns `RecordAck` per record and raises
+  `EventMessageReceived` with no error; the default publish callback raises
+  `EventMessagePublished` per confirmation with `Err` set only on a failed
+  confirmation, while the default return callback raises `EventMessageReturned`
+  unconditionally per return.
 - **Stringer guards:** `clienttype_string.go`, `eventtype_string.go`,
   `confirmationoutcome_string.go`, and `recordoutcome_string.go` carry guard arrays that turn
   enum drift into compile errors (2 `ClientType` values, 15 `EventType` values,
@@ -233,8 +236,12 @@ declaration.)
 
 - **Goroutines:** every constructor spawns a background recovery/manage goroutine that
   outlives the call (managed-latch `Unlock()` on entry, deferred `Lock()`); each
-  consumer deliveries channel gets a `gobble` loop goroutine; timers (`time.After`) are
-  created per backoff, per `AwaitDeferredConfirmation`, and per consume iteration.
+  sequential consumer deliveries channel gets one `gobble` loop goroutine, while a
+  concurrent consumer channel spawns `ProcessorConcurrency` worker goroutines per
+  recovery generation, all joined before that generation's consume loop returns (old
+  and new generations may briefly overlap at 2N workers); timers (`time.After`) are
+  created per backoff, per `AwaitDeferredConfirmation`, and per sequential consume
+  iteration only.
 - **Network:** `amqp.DialConfig` on (re)connect; every safe-wrapper channel operation
   performs broker I/O **while holding** `baseChan.mu`; `refreshCredentials` calls the
   user's `SecretProvider.Password()` and rewrites the connection address.

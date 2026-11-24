@@ -140,7 +140,7 @@ None open. Resolved during drafting:
 ### CUJ 1: Parallel processing of a busy queue
 
 *   **Given**: An application builds a consumer with
-    `NewConsumer(conn, DefaultConsumerOptions().WithQueue("jobs").WithPrefetchCount(8).WithProcessorConcurrency(8), WithChannelOptionProcessRecord(processRecord))`
+    `opts := DefaultConsumerOptions(); opts.WithQueue("jobs").WithPrefetchCount(8).WithProcessorConcurrency(8); NewConsumer(conn, opts, WithChannelOptionProcessRecord(processRecord))`
     — using the channel-level builder `WithChannelOptionProcessRecord` — and a
     record callback that decodes, processes, and returns `RecordAck` or
     `RecordNackRequeue`.

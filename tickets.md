@@ -191,6 +191,10 @@ owner decision).
     concurrent path; gobble join observable (`AwaitManager`).
 *   **Notes:** `Qos` call untouched (trace pin). Sequential path
     byte-identical at zero value.
+*   **Status:** closed 2026-11-24 — latch pin test (`channel_latch_test.go`),
+    per-generation worker pool with join, settle helper, default record/batch
+    processors, and a tracer-bullet dispatch test. Full and `-race` suites
+    green; the tracer bullet asserts no flush events on the concurrent path.
 
 ### T12 — F3: behavioural test suite
 
