@@ -38,13 +38,17 @@ What I'd like this library to provide is:
   - [x] consumers to accept user defined handlers for processing the received messages
   - [x] the consumer handlers to also allow batch processing (with support for 
       partial fulfillment of QoS expectations based on a timeout)
+  - [x] optionally dispatch each delivery to a bounded per-record worker pool, with
+      library-owned acknowledgment (ack / nack-requeue / nack-drop)
   - [x] Bonus: optionally provide the users with access to the low level `amqp.Channel`. **Unsafe**
       initially. **Note**: safety comes for free if using the slightly higher level `grabbit.Channel` wrappers.
 
 ## Non goals
 
   * not interested in concurrency safety of the high level publisher and consumers. These are relatively 
-   cheap therefore use plenty as needed, instead of passing them across coroutines.
+   cheap therefore use plenty as needed, instead of passing them across coroutines. The concurrent
+   consumer option runs *user record processors* concurrently; it does not make the `Publisher` or
+   `Consumer` objects themselves safe to share across goroutines.
 
 ## Credits
 

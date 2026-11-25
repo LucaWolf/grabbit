@@ -2,7 +2,7 @@
 
 Compact instruction file for future OpenCode sessions.
 
-Agents to read CONTEXT.md files for module boundaries and leave README.md untouched.
+Agents to read CONTEXT.md files for module boundaries. README.md is human-maintained; edit it only when a ticket explicitly calls for a public-documentation sync.
 
 ## Developer Commands
 
@@ -26,9 +26,9 @@ All three constructors accept variadic `WithOptionFunc` to configure the object.
 
 - **`WithConnectionOption*`** and **`WithChannelOption*`** are functional options. Each returns `func(*Options) nil` and mutates the corresponding struct field.
 - Key connection options: `WithConnectionOptionContext`, `WithConnectionOptionName`, `WithConnectionOptionDown`, `WithConnectionOptionUp`, `WithConnectionOptionRecovering`, `WithConnectionOptionDelay`, `WithConnectionOptionPassword`, `WithConnectionOptionNotification`.
-- Key channel options: `WithChannelOptionContext`, `WithChannelOptionName`, `WithChannelOptionDown`, `WithChannelOptionUp`, `WithChannelOptionRecovering`, `WithChannelOptionDelay`, `WithChannelOptionNotification`, `WithChannelOptionTopology`, `WithChannelOptionProcessor`, `WithChannelOptionNotifyPublish`, `WithChannelOptionNotifyReturn`.
+- Key channel options: `WithChannelOptionContext`, `WithChannelOptionName`, `WithChannelOptionDown`, `WithChannelOptionUp`, `WithChannelOptionRecovering`, `WithChannelOptionDelay`, `WithChannelOptionNotification`, `WithChannelOptionTopology`, `WithChannelOptionProcessor`, `WithChannelOptionProcessRecord`, `WithChannelOptionNotifyPublish`, `WithChannelOptionNotifyReturn`.
 - Publisher options: `WithExchange`, `WithKey`, `WithMandatory`, `WithImmediate`, `WithConfirmationsCount`, `WithContext`, `WithConfirmationNoWait`.
-- Consumer options: `WithName`, `WithPrefetchTimeout`, `WithPrefetchCount`, `WithPrefetchSize`, `WithQosGlobal`, `WithQueue`, `WithAutoAck`, `WithExclusive`, `WithNoLocal`, `WithNoWait`, `WithArgs`.
+- Consumer options: `WithName`, `WithPrefetchTimeout`, `WithPrefetchCount`, `WithPrefetchSize`, `WithProcessorConcurrency`, `WithQosGlobal`, `WithQueue`, `WithAutoAck`, `WithExclusive`, `WithNoLocal`, `WithNoWait`, `WithArgs`.
 
 **Important**: ConsumerAutoAck defaults to `false`. Must explicitly call `WithAutoAck(true)` if you want automatic acknowledgment.
 
@@ -57,8 +57,12 @@ All three constructors accept variadic `WithOptionFunc` to configure the object.
 - **Default prefetch count**: 1 (`DefaultConsumerOptions` sets `PrefetchCount: 1`).
 - `WithPrefetchCount(n)` sets the QoS prefetch.
 - `WithPrefetchSize(size)` is **not supported by RabbitMQ** and seems to block consumers — **avoid using it**.
-- `WithQosGlobal(global)` makes QoS global across future channels.
+- `WithQosGlobal(global)` applies the prefetch window to all consumers on the channel (RabbitMQ's global QoS is per-channel, not connection-wide); RabbitMQ 4.3+ deprecates and disables it by default. grabbit consumers each own a channel, so it does not change the channel's bound — leave it false.
 - `WithAutoAck(true)` disables explicit acknowledgment (messages are acked automatically).
+- `WithProcessorConcurrency(n)` switches that consumer channel to per-record dispatch: zero/negative keeps sequential batches, positive runs at most `n` record workers. Under manual ack it is inert at the default prefetch of 1; auto-ack ignores prefetch, so the pool bound still applies.
+- On the concurrent path there is no batch fill, no `PrefetchTimeout` timer, no `EventDataPartial`/`EventDataExhausted`, and `WithChannelOptionProcessor` is ignored. Use `WithChannelOptionProcessRecord` returning `RecordAck`, `RecordNackRequeue`, or `RecordNackDrop`.
+- Effective manual-ack concurrency is `min(n, PrefetchCount)` for a positive prefetch. With `WithAutoAck(true)` the broker ignores prefetch, so the pool size `n` is the bound. `PrefetchCount` 0 means unlimited to the broker while the pool still caps callbacks at `n`; that combination is outside the supported concurrent contract.
+- Requeued poison records can loop at wire speed. Detect `DeliveryData.Redelivered` and return `RecordNackDrop` (or apply your own bounded retry policy); the library has no retry counting or backoff.
 
 ## Tracing / Trace Infrastructure
 

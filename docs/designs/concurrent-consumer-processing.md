@@ -1,7 +1,7 @@
 # Concurrent Consumer Processing: Per-Record Dispatch
 
 *   **Author:** LucaWolf
-*   **Status:** Proposed
+*   **Status:** Accepted; implemented (T10–T13)
 *   **Date:** 2026-11-23
 
 --------------------------------------------------------------------------------
@@ -558,8 +558,10 @@ job are green (per the approved Technical Plan and the brief's staged order).
     (inside the embedded struct — a field on `ConsumerOptions` outside it
     never reaches the channel). Add the `WithProcessorConcurrency(n int)`
     builder following the two-branch naming convention. Fix the misleading
-    `QosGlobal` field comment ("all future channels") to state that global
-    QoS shares the window across the connection's channels. WARNING-grade
+    `QosGlobal` field comment ("all future channels") to state that RabbitMQ's
+    global QoS is per-channel and deprecated from 4.3, and that grabbit's
+    one-consumer-per-channel layout means it does not widen the bound.
+    WARNING-grade
     doc comment on the builder: inert at default prefetch (1);
     `PrefetchTimeout` and flush events retire when set; negative means off;
     `PrefetchCount ≤ 0` is unsupported on the concurrent path.

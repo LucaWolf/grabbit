@@ -86,8 +86,9 @@ configuration is hardcoded:
 6. Creates four consumers (`consumer.one` … `consumer.four`, prefetch 8 / 3 / 4 / 7), each with
    `WithChannelOptionProcessor(MsgHandler(rnd, &mu, validate))`.
 7. `MsgHandler` behavior (invoked by grabbit with each prefetched batch):
-   - Returns immediately when `mustAck` is false (auto-ack mode guard; not active here since
-     `DefaultConsumerOptions` leaves AutoAck false).
+   - Returns immediately when `mustAck` is false (recovery/teardown flush guard: a batch
+     cannot be acknowledged across a transition; it also covers auto-ack, though this
+     example keeps manual ack).
    - Batches of fewer than 5 messages: log the full body list, bulk-ACK the whole range with
      `ch.Ack(lastDeliveryTag, true)`.
    - Batches of 5 or more: split at 2/3 of the batch; a mutex-guarded `rnd.Int()%2` coin toss
@@ -103,8 +104,9 @@ configuration is hardcoded:
 ## Invariants
 
 - **Consumers require manual ack:** `DefaultConsumerOptions()` leaves AutoAck false, so the
-  processor is always invoked with `mustAck == true`; the handler's `!mustAck` early-return is
-  a defensive guard for auto-ack configurations.
+  batch processor is normally invoked with `mustAck == true`; the handler's `!mustAck`
+  early-return is the recovery/teardown flush guard (it also covers auto-ack, which this
+  example does not use).
 - **Batching is prefetch-driven with a 5 s flush:** each consumer's batch size is its prefetch
   count (8 / 3 / 4 / 7). `WithPrefetchTimeout(5 * time.Second)` makes grabbit flush partial
   batches after message flow pauses (raising `EventDataPartial`, or `EventDataExhausted` when

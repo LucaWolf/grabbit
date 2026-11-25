@@ -17,7 +17,7 @@ type ConsumerUsageOptions struct {
 	PrefetchCount        int           // Qos count
 	PrefetchSize         int           // Qos payload size
 	ProcessorConcurrency int           // >0 per-record dispatch with N workers; 0 or negative = sequential batches
-	QosGlobal            bool          // all future channels
+	QosGlobal            bool          // apply the prefetch window to all consumers on the channel (deprecated on RabbitMQ 4.3+)
 	ConsumerQueue        string        // queue name from which to receive. Overridden by engine assigned name.
 	ConsumerAutoAck      bool          // see [amqp.Consume]
 	ConsumerExclusive    bool          // see [amqp.Consume]
@@ -93,12 +93,16 @@ func (opt *ConsumerOptions) WithPrefetchCount(count int) *ConsumerOptions {
 //   - effective parallelism is min(count, PrefetchCount) under manual
 //     acknowledgments; with [ConsumerOptions.WithAutoAck] the worker pool is the
 //     only bound;
-//   - PrefetchCount <= 0 is unsupported on this path;
+//   - PrefetchCount <= 0 is outside the supported contract: 0 removes the
+//     broker's prefetch window (unlimited) while the pool still caps callbacks
+//     at count;
 //   - consecutive records may be processed concurrently, so the callback must
 //     be concurrency-safe and must not rely on processing order.
 //
-// WARNING: with the default PrefetchCount of 1 this option is effectively inert
-// (the broker allows only one unacknowledged delivery in flight).
+// WARNING: under manual acknowledgment (the default) this option is effectively
+// inert at the default PrefetchCount of 1, because the broker allows only one
+// unacknowledged delivery in flight. Auto-ack ignores prefetch, so the worker
+// pool remains the bound there.
 //
 // Returns the updated ConsumerOptions.
 func (opt *ConsumerOptions) WithProcessorConcurrency(count int) *ConsumerOptions {
@@ -114,7 +118,12 @@ func (opt *ConsumerOptions) WithPrefetchSize(size int) *ConsumerOptions {
 	return opt
 }
 
-// WithQosGlobal makes the QoS option global or not.
+// WithQosGlobal applies the prefetch window globally to all consumers on the
+// channel instead of per consumer (RabbitMQ's global QoS is per-channel, not
+// per-connection). grabbit consumers each own a channel, so this does not widen
+// the channel's bound; RabbitMQ 4.3+ deprecates and disables global QoS by
+// default. Leave it at the false default.
+//
 // Returns the updated ConsumerOptions.
 func (opt *ConsumerOptions) WithQosGlobal(global bool) *ConsumerOptions {
 	opt.QosGlobal = global

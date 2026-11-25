@@ -247,6 +247,13 @@ owner decision).
     `multiple=true` definition, bounds, lifecycle, settle rules (narrowed,
     not closed), retirement set, and the poison paragraph.
 *   **Notes:** no broker needed.
+*   **Status:** closed 2026-11-25 — CONTEXT/GLOSSARY/AGENTS/README synced
+    (dispatch models, record surface, bounds, retirement, per-channel
+    `QosGlobal` caveat); ADR-0008 added with the `multiple=true` definition,
+    settle rules (narrowed, not closed), lifecycle, bounds, retirement set, and
+    poison guidance; `QosGlobal` field/builder comments, the batch-example
+    guard label, and the test comment drift corrected. Design docs marked
+    implemented. Docs-only; CI suite green.
 
 ### T14 — F5: example demonstrating the record hook
 

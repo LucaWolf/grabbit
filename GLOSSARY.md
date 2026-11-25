@@ -49,13 +49,25 @@ _Avoid_: notification, handler
 
 ### Consuming
 
-**Processor**:
-The single user hook that receives delivery batches and decides their fate — acknowledge, negatively acknowledge, or reject.
+**Batch processor**:
+The user hook on the sequential path that receives delivery batches and decides their fate — acknowledge, negatively acknowledge, or reject.
 _Avoid_: message handler, consumer callback
 
+**Record processor**:
+The user hook on the concurrent path that receives one delivery and returns a record outcome: acknowledge, nack-requeue, or negative without requeue (nack-drop).
+_Avoid_: per-message handler, worker callback
+
+**Processor concurrency**:
+The per-channel worker-pool size that selects per-record dispatch: zero or negative keeps the sequential model, a positive value runs at most that many record processors at once.
+_Avoid_: parallelism, thread count
+
 **Delivery batch**:
-The group of deliveries handed to a processor at once: filled to the prefetch setting, and flushed partially when deliveries stop arriving for long enough.
+The group of deliveries handed to a batch processor at once on the sequential path: filled to the prefetch setting, and flushed partially when deliveries stop arriving for long enough.
 _Avoid_: chunk, message group
+
+**Acknowledgment**:
+The consumer-side settlement of a delivery — positive (ack), negative with requeue, or negative without requeue. `multiple=true` settles every outstanding delivery up to and including the given tag on that channel; the concurrent path always settles one tag at a time with `multiple=false`.
+_Avoid_: confirm (reserved for publisher-side broker confirmation)
 
 **Resolved queue name**:
 The queue a channel actually consumes from: the name captured from its destination element when one exists, otherwise the configured consume queue.

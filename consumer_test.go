@@ -131,7 +131,7 @@ func MsgHandlerSlow(count *SafeCounter, delay time.Duration) CallbackProcessReco
 // TestBatchConsumer evaluates if several processing repeats over a broken connection
 // successfully reads all messages, eventually. For this scenario, large batches are split into two parts: one ACKed
 // and the other rejected, randomly selected for ACK-ing. Over several attempts,
-// the chunk size is reduced sufficiently (ref.FULL_BATCH_ACK_THRESHOLD) for the whole batch to be ACKed.
+// the batch size is reduced sufficiently (ref.FULL_BATCH_ACK_THRESHOLD) for the whole batch to be ACKed.
 func TestBatchConsumer(t *testing.T) {
 	QueueName := "workload_consumer_batch"
 	const MSG_COUNT = 2345

@@ -27,9 +27,11 @@ it is `AwaitStatus` / `AwaitManager` rather than `IsClosed` polling.
 
 Publishers get broker confirmations two ways: channel-level `NotifyPublish` callbacks
 armed by a positive `ConfirmationCount`, and per-message `PublishDeferredConfirm` +
-`AwaitDeferredConfirmation` with a `ConfirmationOutcome` matrix. Consumers get
-prefetch-batched delivery processing through a single `CallbackProcessMessages` entry
-point, with manual acknowledgments by default. The root package's direct source files
+`AwaitDeferredConfirmation` with a `ConfirmationOutcome` matrix. Consumers choose one
+of two per-channel dispatch models fixed at construction: the default sequential model
+feeds prefetch-batched deliveries to `CallbackProcessMessages`, while a positive
+`ProcessorConcurrency` switches the channel to per-record worker dispatch through
+`CallbackProcessRecord`; both default to manual acknowledgments. The root package's direct source files
 implement all of this; `internal/traceutils` provides a build-tag-gated tracing harness
 the test suite uses to assert exact AMQP call parameters without a broker, and
 `examples/` holds nine standalone demo modules.
@@ -90,6 +92,7 @@ declaration.)
   `WithChannelOptionName`, `WithChannelOptionNotification`, `WithChannelOptionTopology([]*TopologyOptions)`,
   `WithChannelOptionNotifyPublish`, `WithChannelOptionNotifyReturn`,
   `WithChannelOptionProcessor(CallbackProcessMessages)`,
+  `WithChannelOptionProcessRecord(CallbackProcessRecord)`,
   `WithChannelOptionUsageParams(ChanUsageParameters)`.
 - **Publisher options** (`publisher_options.go`): `PublisherOptions` embeds
   `PublisherUsageOptions{ConfirmationCount, ConfirmationNoWait, IsPublisher}` — the half
@@ -101,8 +104,8 @@ declaration.)
   `ConsumerUsageOptions` — its `IsConsumer: true` default is what makes a channel start
   consuming (spawning the `gobble` delivery loop); `DefaultConsumerOptions()`,
   `RandConsumerName()`, and the fluent builders `WithName`, `WithPrefetchTimeout`,
-  `WithPrefetchCount`, `WithPrefetchSize`, `WithQosGlobal`, `WithQueue`, `WithAutoAck`,
-  `WithExclusive`, `WithNoLocal`, `WithNoWait`, `WithArgs`.
+  `WithPrefetchCount`, `WithPrefetchSize`, `WithProcessorConcurrency`, `WithQosGlobal`,
+  `WithQueue`, `WithAutoAck`, `WithExclusive`, `WithNoLocal`, `WithNoWait`, `WithArgs`.
 - **Topology** (`topology_options.go`): `TopologyOptions{Name, IsDestination,
   IsExchange, Bind TopologyBind, Kind, Durable, AutoDelete, Exclusive, Internal, NoWait,
   Passive, Declare, Args}` with `GetRouting()` deriving binding direction from
@@ -115,8 +118,13 @@ declaration.)
   RequestSequence uint64; ChannelName, Queue string }`; `ConfirmationOutcome` constants
   `ConfirmationTimeOut`, `ConfirmationClosed`, `ConfirmationDisabled`,
   `ConfirmationPrevious`, `ConfirmationACK`, `ConfirmationNAK`.
-- **Delivery batching** (`general_options.go`): `CallbackProcessMessages(props
-  *DeliveriesProperties, messages []DeliveryData, mustAck bool, ch *Channel)`,
+- **Delivery processing** (`general_options.go`): sequential batches use
+  `CallbackProcessMessages(props *DeliveriesProperties, messages []DeliveryData,
+  mustAck bool, ch *Channel)`; the concurrent path uses
+  `CallbackProcessRecord(props *DeliveriesProperties, message DeliveryData)
+  RecordOutcome`, which deliberately receives no `*Channel` and no `mustAck`.
+  `RecordOutcome` has `RecordAck`, `RecordNackRequeue` (the zero value, so an
+  undecided outcome redelivers), and `RecordNackDrop`. Supporting types:
   `DeliveriesProperties` / `DeliveryPropsFrom`, `DeliveryData` / `DeliveryDataFrom`,
   `DeliveryPayload`; callback types `CallbackWhenDown`, `CallbackWhenUp`,
   `CallbackWhenRecovering`, `CallbackNotifyPublish`, `CallbackNotifyReturn`.
@@ -144,19 +152,41 @@ declaration.)
   `DefaultPublisherOptions()`: `ConfirmationCount` 10, `IsPublisher` true,
   `Context` `context.TODO()`, empty exchange/key, `Mandatory`/`Immediate` false.
   `DefaultConsumerOptions()`: `IsConsumer` true (gates consume-mode behavior on the
-  channel), `PrefetchCount` 1, `PrefetchSize` 0, `ConsumerAutoAck` **false**, random
-  `ConsumerName` (8 crypto-random bytes hex-encoded — losing the server-assigned name
-  would make `Cancel` impossible).
+  channel), `PrefetchCount` 1, `PrefetchSize` 0, `ProcessorConcurrency` 0 (the
+  sequential batch model), `ConsumerAutoAck` **false**, random `ConsumerName`
+  (8 crypto-random bytes hex-encoded — losing the server-assigned name would make
+  `Cancel` impossible).
 - **Consumers default to manual ack:** `mustAck = !ConsumerAutoAck`; before processing
   any batch, grabbit ANDs `mustAck` with a 100 ms `AwaitStatus(true, ...)` check and a
   connected-latch transition check — across a recovery transition the batch is
   processed with `mustAck=false` (cannot ack on a dead channel); on ctx cancellation or
-  consumer-channel close, a pending batch is flushed with `mustAck=false`.
-- **Batching:** deliveries accumulate up to `PrefetchCount`; `PrefetchTimeout` flushes
-  partial batches (`EventDataPartial`, or `EventDataExhausted` when nothing pending);
-  `DeliveriesProperties` are taken from the first delivery of each batch; QoS errors
-  only raise `EventQos` (consume proceeds anyway), consume errors raise `EventConsume`
-  and abort.
+  consumer-channel close, a pending batch is flushed with `mustAck=false`. The
+  concurrent path has no sticky `mustAck`: the settle helper re-derives ack-worthiness
+  per record, re-checks the connected latch non-blockingly immediately before the wire
+  call, and skips the write when the channel is down or the generation changed, leaving
+  the record unacknowledged for redelivery
+  ([ADR-0008](./docs/adr/0008-per-channel-dispatch-model-sequential-by-default-and-concurrent-by-option.md)).
+  Every record is settled with `multiple=false`, so an ack or nack covers exactly one
+  delivery tag.
+- **Sequential batching:** deliveries accumulate up to `PrefetchCount`;
+  `PrefetchTimeout` flushes partial batches (`EventDataPartial`, or `EventDataExhausted`
+  when nothing pending); `DeliveriesProperties` are taken from the first delivery of
+  each batch. QoS errors only raise `EventQos` (consume proceeds anyway), consume errors
+  raise `EventConsume` and abort.
+- **Concurrent dispatch:** a positive `ProcessorConcurrency` selects the per-record
+  model fixed at construction. Workers pull deliveries directly from the feed (no
+  dispatcher goroutine, no work channel); each record gets its own
+  `DeliveriesProperties` from its own delivery, and `props.Headers` is that delivery's
+  map by reference (not deep-copied) and must be treated as read-only. There is no
+  batch fill, no `PrefetchTimeout` timer, no `EventDataPartial`/`EventDataExhausted`,
+  and the batch processor is ignored; at zero the record processor is unused. Effective
+  in-flight concurrency is `min(N, PrefetchCount)` under manual ack (for a positive
+  prefetch) and the pool size `N` under `ConsumerAutoAck`; `PrefetchCount` 0 or
+  negative removes the broker window (`0` means unlimited) while the pool still caps
+  callbacks at `N`. `QosGlobal(true)` is per-channel, is deprecated and disabled by
+  default on RabbitMQ 4.3+, and does not widen the bound because each grabbit consumer
+  owns its channel. No queue-drain event exists on this path — completion is observed
+  through user-side registries.
 - **Queue selection:** `Channel.Queue()` is written only by topology elements marked
   `IsDestination` (including server-assigned names); a non-empty `ch.queue` overrides
   `ConsumerQueue` at consume time.
@@ -164,7 +194,13 @@ declaration.)
   RabbitMQ and seems to block consumers — avoid it; `WithExclusive(true)` blocks all
   other consumers on the queue; `WithImmediate(true)` is no longer supported by recent
   RabbitMQ servers; `WithConfirmationNoWait(true)` seems to block the `Confirm`
-  operation on the channel.
+  operation on the channel. Under manual ack, `WithProcessorConcurrency` is inert at
+  the default `PrefetchCount` of 1 (auto-ack ignores prefetch); it retires
+  `PrefetchTimeout` and the flush events when set, and
+  treats zero/negative as sequential. `PrefetchCount <= 0` is outside the supported
+  concurrent contract: `0` means unlimited to the broker, so the worker pool alone caps
+  callbacks at `N`; its record processor must be concurrency-safe and must not rely on
+  processing order.
 - **Confirmation mode:** armed only when `ConfirmationCount > 0`; a zero count disables
   it entirely (every `AwaitDeferredConfirmation` then yields `ConfirmationDisabled`).
   `PublishDeferredConfirm*` captures `RequestSequence` via `GetNextPublishSeqNo()`
