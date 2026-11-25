@@ -7,19 +7,22 @@ local working tree. The root module's `go test ./...` does **not** compile them.
 
 ## Overview
 
-Nine single-purpose demo programs, each a self-contained `package main` with one `main.go`,
-no CLI flags, no tests, and one demo concern. All connect to the same hardcoded broker
-`amqp://guest:guest@localhost` (guest/guest), so actually **running** any of them
-(`go run .`) requires a live RabbitMQ. Together they form a tutorial progression:
-lifecycle observation (`connection`, `channel`, `contexts`), publishing (baseline →
-routing → confirmations), and consuming (competing consumers → batch processing).
+Ten single-purpose demo programs, each a self-contained `package main` with one `main.go`,
+no CLI flags, no tests, and one demo concern. All connect to a hardcoded broker
+`amqp://guest:guest@localhost` (guest/guest), except `per_record`, which pins
+`127.0.0.1` to avoid an IPv6 loopback mismatch; **running** any of them (`go run .`)
+requires a live RabbitMQ. Together they form a tutorial progression: lifecycle observation
+(`connection`, `channel`, `contexts`), publishing (baseline → routing → confirmations),
+and consuming (competing consumers → batch processing → per-record concurrency).
 
-Shared build caveat (applies to every child): the demo `go.mod`/`go.sum` files predate
-the current library tree — they pin `amqp091-go v1.9.0` while the root module requires
-`v1.10.0`, and they lack `go-notifying-latch v1.1.0` (imported by grabbit's non-test
-code). `go test ./...` / `go build ./...` may fail with missing `go.sum` entries until
-`go mod tidy` is run in the demo directory; the replaced module's `go 1.25.7` directive
-also means a Go toolchain ≥ 1.25.7 is required even though each demo declares `go 1.21`.
+Shared build caveat (applies to the older children): those demo `go.mod`/`go.sum` files
+predate the current library tree — they pin `amqp091-go v1.9.0` while the root module
+requires `v1.10.0`, and they lack `go-notifying-latch v1.1.0` (imported by grabbit's
+non-test code). `go test ./...` / `go build ./...` may fail with missing `go.sum` entries
+until `go mod tidy` is run in the demo directory; the replaced module's `go 1.25.7`
+directive also means a Go toolchain ≥ 1.25.7 is required even though those demos declare
+`go 1.21`. `per_record` is the exception: its module is pinned to the current root
+dependencies and declares `go 1.25.7` directly.
 
 ## Subdirectories & Boundaries
 
@@ -28,6 +31,7 @@ also means a Go toolchain ≥ 1.25.7 is required even though each demo declares 
 - [consumer](./consumer/CONTEXT.md) — two competing consumers on the durable queue `workload` randomly `Ack` vs `Nack(requeue=true)` the same 35 seeded messages, exercising recovery callbacks and consumer options.
 - [consumer_batch](./consumer_batch/CONTEXT.md) — batch consumption at scale: 500 published messages, four consumers with distinct prefetch counts (8/3/4/7), a processor that bulk-ACKs or splits/NAcks batches, and an exactly-once ACK registry check at shutdown.
 - [contexts](./contexts/CONTEXT.md) — context-tree control of channel lifecycles: asserts that closing a channel does **not** close sibling-context channels and that cancelling a parent context closes descendants; self-terminating, polls `IsClosed()` (context death emits no `EventClosed`).
+- [per_record](./per_record/CONTEXT.md) — per-record concurrent consumption: 24 records, 8 workers, a 200 ms handler, explicit ack / requeue-then-drop / poison-drop outcomes, and a terminal-outcome + peak-overlap summary. Run it with `go run .` from this directory.
 - [pub_deferred](./pub_deferred/CONTEXT.md) — deferred publish confirmations via `Publisher.PublishDeferredConfirm` + `AwaitDeferredConfirmation`, one-by-one and in-order bulk awaits; module path is `pub_deferred_confirm` (≠ directory name).
 - [publisher](./publisher/CONTEXT.md) — baseline fire-and-forget publisher: five paced publishes to the durable queue `workload`, confirm callbacks for logging only, then five deliberate post-close failures.
 - [publisher_await_delivery](./publisher_await_delivery/CONTEXT.md) — synchronous publisher confirmations: captures `Channel.GetNextPublishSeqNo()` before each publish and blocks (≤ 7 s) for the broker's confirmation, matching request vs response sequence numbers; contains its own `ConfirmationOutcome` enum + stringer.
@@ -42,7 +46,9 @@ module (run inside the target directory):
 go test ./...
 ```
 
-Running any demo requires a live RabbitMQ broker at `amqp://guest:guest@localhost`:
+Running any demo requires a live RabbitMQ broker. The demos use
+`amqp://guest:guest@localhost` except `per_record`, which uses
+`amqp://guest:guest@127.0.0.1:5672/`:
 
 ```sh
 go run .

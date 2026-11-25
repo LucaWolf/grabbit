@@ -266,6 +266,11 @@ owner decision).
     and a slow handler to show overlap.
 *   **Acceptance:** example builds and runs against the container; count
     references consistent; no new event kinds.
+*   **Status:** closed 2026-11-25 — new tenth module `examples/per_record/`
+    (concurrent consumer, ack / requeue-then-drop / poison-drop branches, 200 ms
+    handler, terminal-outcome and peak-overlap summary); example index and the
+    three "nine" count references updated to ten. Module builds/vets clean and
+    ran against LavinMQ (24/24 settled, peak overlap 8). No new event kinds.
 
 ### T15 — Release: minor-release packaging
 

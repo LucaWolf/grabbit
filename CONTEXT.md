@@ -34,7 +34,7 @@ feeds prefetch-batched deliveries to `CallbackProcessMessages`, while a positive
 `CallbackProcessRecord`; both default to manual acknowledgments. The root package's direct source files
 implement all of this; `internal/traceutils` provides a build-tag-gated tracing harness
 the test suite uses to assert exact AMQP call parameters without a broker, and
-`examples/` holds nine standalone demo modules.
+`examples/` holds ten standalone demo modules.
 
 ## Local Interface & Invariants
 
@@ -299,11 +299,13 @@ declaration.)
 
 ## Subdirectories & System Boundaries
 
-- [examples](./examples/CONTEXT.md) — nine standalone demo modules (own `go.mod` each,
+- [examples](./examples/CONTEXT.md) — ten standalone demo modules (own `go.mod` each,
   `replace`d to this working tree), outside the root module's package graph: connection
-  and channel lifecycle, context trees, baseline/routing/confirmed publishing, and
-  competing/batch consuming. Compile-only verification per module; running requires a
-  live RabbitMQ at `amqp://guest:guest@localhost`.
+  and channel lifecycle, context trees, baseline/routing/confirmed publishing, competing
+  and batch consuming, and per-record concurrency (`per_record`). Compile-only
+  verification per module;
+  running requires a live RabbitMQ (the demos use `localhost`, except `per_record`'s
+  `127.0.0.1`).
 - [internal](./internal/CONTEXT.md) — non-public support code; currently one child:
   [internal/traceutils](./internal/traceutils/CONTEXT.md), the build-tag-gated AMQP
   call-tracing harness used by the root package and its tests.
@@ -311,9 +313,10 @@ declaration.)
 ## Global Invariants
 
 - The **root module** (`github.com/LucaWolf/grabbit`, go 1.25.7) is the library. The
-  nine **example modules** are separate Go modules pinned via `replace` directives;
-  the root `go test ./...` does not compile them, and their `go.sum` files predate the
-  root's current dependency pins (`go mod tidy` may be required before they build).
+  ten **example modules** are separate Go modules pinned via `replace` directives;
+  the root `go test ./...` does not compile them. Most of their `go.sum` files predate
+  the root's current dependency pins (`go mod tidy` may be required before they build);
+  `per_record` is pinned to the current root dependencies.
 - Everything under `internal/` is invisible to external importers (Go `internal` rule)
   and may change freely; nothing there is part of the public API.
 - The `test_env` build tag is part of the testing contract: CI runs
