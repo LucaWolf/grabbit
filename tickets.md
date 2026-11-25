@@ -284,6 +284,12 @@ owner decision).
 *   **Acceptance:** release notes list every public surface added and every
     behavior difference on the concurrent path; the remediation release stays
     corrections-only.
+*   **Status:** closed 2026-11-25 — symbolic `v1.2.0` bump in `README.md`;
+    `RELEASE_NOTES.md` carries the two-column map, the corrections-only
+    remediation section, every added public surface, and every concurrent-path
+    behavior difference (retirement set, drain-signal loss, bounds, settlement,
+    lifecycle, `QosGlobal`, poison). External tag/publish remains the only
+    unchecked release-checklist item.
 
 ---
 
