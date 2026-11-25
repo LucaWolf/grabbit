@@ -117,15 +117,14 @@ func MsgHandlerQoS(
 	}
 }
 
-func MsgHandlerSlow(count *SafeCounter, delay time.Duration) CallbackProcessMessages {
-	return func(props *DeliveriesProperties, messages []DeliveryData, mustAck bool, ch *Channel) {
+// MsgHandlerSlow is the slow-record variant of the per-record callback: it
+// counts invocations, spends delay in user code, and leaves settlement to the
+// library. It is used by the concurrent recovery and shutdown scenarios.
+func MsgHandlerSlow(count *SafeCounter, delay time.Duration) CallbackProcessRecord {
+	return func(props *DeliveriesProperties, message DeliveryData) RecordOutcome {
 		count.Add(1)
-		if mustAck {
-			idxLast := len(messages) - 1
-			lastDeliveryTag := messages[idxLast].DeliveryTag
-			ch.Ack(lastDeliveryTag, true)
-		}
 		<-time.After(delay)
+		return RecordAck
 	}
 }
 

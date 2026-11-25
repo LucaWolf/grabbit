@@ -221,6 +221,15 @@ owner decision).
 *   **Notes:** adopt the dead `MsgHandlerSlow` helper (`consumer_test.go:120`)
     as the slow-record variant instead of writing a new one. Completion
     gating is registry-based, not event-based.
+*   **Status:** closed 2026-11-25 — behavioural suite in
+    `channel_consume_test.go` (recovery completion, Close/channel-ctx shutdown,
+    manual prefetch/worker and auto-ack bounds, no-flush plus a sequential
+    partial-flush control, finite poison requeue, 2N generation overlap);
+    concurrency/drain helpers in `container_setup_test.go`; `MsgHandlerSlow`
+    adopted as the slow-record variant. Full `-race` suite green; shutdown
+    subtests carry per-test goleak attribution. Also buffered the channel
+    `NotifyClose` notifier to remove a reproducible context-cancel shutdown
+    deadlock (unbuffered shutdown send racing `Close` behind the channel mutex).
 
 ### T13 — F4: documentation and ADR sync
 

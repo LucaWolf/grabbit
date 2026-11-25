@@ -23,7 +23,12 @@ func (ch *Channel) refreshNotifiers() error {
 	ch.baseChan.mu.Lock()
 	if ch.baseChan.super != nil {
 		// common notifiers
-		ch.notifiers.Closed = ch.baseChan.super.NotifyClose(make(chan *amqp.Error))
+		// Buffered: on an error teardown the amqp channel's shutdown broadcasts the
+		// close error before Close returns. On the context-cancellation path
+		// manage is inside Close rather than selecting on this channel, so an
+		// unbuffered send would deadlock shutdown (and any worker settling a
+		// record behind the base channel mutex).
+		ch.notifiers.Closed = ch.baseChan.super.NotifyClose(make(chan *amqp.Error, 1))
 		ch.notifiers.Cancel = ch.baseChan.super.NotifyCancel(make(chan string))
 		// publishers specific
 		if ch.opt.implParams.IsPublisher {
