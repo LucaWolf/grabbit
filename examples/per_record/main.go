@@ -172,7 +172,7 @@ func publishMessages(publisher *grabbit.Publisher) error {
 	for i := 0; i < messageCount; i++ {
 		message := amqp.Publishing{
 			MessageId: strconv.Itoa(i),
-			Body:      []byte(fmt.Sprintf("record-%03d", i)),
+			Body:      fmt.Appendf(nil, "record-%03d", i),
 		}
 		confirmation, err := publisher.PublishDeferredConfirm(message)
 		if err != nil {
