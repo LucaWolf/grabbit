@@ -30,13 +30,6 @@ func (ch *Channel) AwaitManager(active bool, timeout time.Duration) bool {
 	return awaitOnLatch(&ch.managed, ch.opt.ctx, active, timeout)
 }
 
-// AwaitAvailable waits till the channel is established or timeout expires.
-//
-// Deprecated: replaced by AwaitStatus.
-func (ch *Channel) AwaitAvailable(timeout time.Duration) bool {
-	return ch.AwaitStatus(true, timeout)
-}
-
 // AwaitStatus waits till the channel is in the desired state or timeout expires.
 // Pass 'true' for testing open/ready, 'false' for testing if closed.
 //

@@ -85,22 +85,7 @@ func (ch *Channel) Nack(tag uint64, multiple bool, requeue bool) error {
 	return amqp.ErrClosed
 }
 
-// QueueInspect safely wraps the base channel QueueInspect.
-//
-// Deprecated: use QueueDeclarePassive
-func (ch *Channel) QueueInspect(name string) (amqp.Queue, error) {
-	ch.baseChan.mu.Lock()
-	defer ch.baseChan.mu.Unlock()
-
-	if ch.baseChan.super != nil {
-		result, err := ch.baseChan.super.QueueInspect(name)
-		trace.QueueInspect(ch.opt.ctx, name)
-		return result, err
-	}
-	return amqp.Queue{}, amqp.ErrClosed
-}
-
-// QueueDeclarePassive safely wraps the base channel QueueInspect.
+// QueueDeclarePassive safely wraps the base channel QueueDeclarePassive.
 func (ch *Channel) QueueDeclarePassive(name string, durable, autoDelete, exclusive, noWait bool, args amqp.Table) (amqp.Queue, error) {
 	ch.baseChan.mu.Lock()
 	defer ch.baseChan.mu.Unlock()

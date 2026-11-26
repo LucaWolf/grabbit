@@ -93,11 +93,6 @@ func QueueDeclarePassive(ctx context.Context, name string, durable, autoDelete, 
 func QueueDelete(ctx context.Context, name string, ifUnused, ifEmpty, noWait bool) {
 }
 
-// QueueInspect is a no-op for live code. For testing purposes it builds a ParamsQueueInspect
-// and sends it to the 'ParamsCh' channel (see TraceHandler).
-func QueueInspect(ctx context.Context, name string) {
-}
-
 // QueuePurge is a no-op for live code. For testing purposes it builds a ParamsQueuePurge
 // and sends it to the 'ParamsCh' channel (see TraceHandler).
 func QueuePurge(ctx context.Context, name string, noWait bool) {

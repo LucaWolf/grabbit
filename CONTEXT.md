@@ -53,17 +53,17 @@ The root directory contains the library itself (~22 non-test `.go` files, packag
 `Connection` methods: `Close() error`, `Channel() (*amqp.Channel, error)` (raw channel),
 `Connection() *SafeBaseConn`, `IsBlocked() bool`, `IsClosed() bool`,
 `AwaitStatus(connected bool, timeout time.Duration) bool`, `AwaitManager(active bool,
-timeout time.Duration) bool`, `AwaitAvailable(timeout time.Duration) bool` (deprecated).
+timeout time.Duration) bool`.
 
 `Publisher` methods: `Publish(amqp.Publishing) error`, `PublishWithOptions(opt
 PublisherOptions, msg amqp.Publishing) error`, `PublishDeferredConfirm(amqp.Publishing)
 (*DeferredConfirmation, error)`, `PublishDeferredConfirmWithOptions(...)`,
 `AwaitDeferredConfirmation(d *DeferredConfirmation, tmr time.Duration)
 *DeferredConfirmation`, `Channel() *Channel`, `Available() (bool, bool)`,
-`AwaitStatus`, `AwaitManager`, `AwaitAvailable` (deprecated), `Close() error`.
+`AwaitStatus`, `AwaitManager`, `Close() error`.
 
 `Consumer` methods: `Channel() *Channel`, `Cancel() error`, `Available() (bool, bool)`,
-`AwaitStatus`, `AwaitManager`, `AwaitAvailable` (deprecated), `Close() error`.
+`AwaitStatus`, `AwaitManager`, `Close() error`.
 
 `Channel` methods (safe wrappers around the underlying `amqp.Channel`):
 acknowledgment — `Ack`, `Nack`, `Reject`; consuming — `Consume`, `ConsumeWithContext`,
@@ -71,12 +71,12 @@ acknowledgment — `Ack`, `Nack`, `Reject`; consuming — `Consume`, `ConsumeWit
 `PublishWithDeferredConfirm`, `PublishWithDeferredConfirmWithContext`,
 `GetNextPublishSeqNo`; topology — `QueueDeclare`, `QueueDeclarePassive`,
 `QueueDeclareWithTopology`, `QueueBind`, `QueueUnbind`, `QueuePurge`, `QueueDelete`,
-`QueueInspect` (deprecated), `ExchangeDeclare`, `ExchangeDeclareWithTopology`,
+`ExchangeDeclare`, `ExchangeDeclareWithTopology`,
 `ExchangeDelete`; transactions/flow — `Tx`, `TxCommit`, `TxRollback`, `Flow`, `Confirm`;
 notifier plumbing — `NotifyClose`, `NotifyCancel`, `NotifyFlow`, `NotifyReturn`,
 `NotifyPublish`, `NotifyConfirm`; state — `Name()`, `Queue()`, `Channel() *SafeBaseChan`,
-`IsPaused()`, `IsClosed()`, `AwaitStatus`, `AwaitManager`, `AwaitAvailable`
-(deprecated), `Close()`, `Cancel(consumer string, noWait bool) error`.
+`IsPaused()`, `IsClosed()`, `AwaitStatus`, `AwaitManager`, `Close()`,
+`Cancel(consumer string, noWait bool) error`.
 (There is no `ExchangeBind` method — exchange bindings are applied only via topology
 declaration.)
 
@@ -132,8 +132,7 @@ declaration.)
   (via `NewDefaultDelayer()`), `SecretProvider` interface for `WithConnectionOptionPassword`.
 - **Concurrency primitives & utilities**: `SafeBaseConn` / `SafeBaseChan`
   (`connection_safebase.go` / `channel_safebase.go`) exposing `IsSet`, `Super`, and
-  manual `Lock`/`Unlock`/`RLock`/`RUnlock`; `SafeBool` (`events.go:9-12`) — an exported
-  concurrency-safe bool wrapper, currently referenced by nothing else in the package;
+  manual `Lock`/`Unlock`/`RLock`/`RUnlock`;
   `OptionalError` (`error.go`) with `SomeErrFromError`, `SomeErrFromString`, `Or`,
   `Error`, `IsSet`; `ClampInt`, `ClampInt64`, `ClampDuration` (`utils.go`).
 
