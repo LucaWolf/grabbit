@@ -29,7 +29,10 @@ type DefaultDelayer struct {
 	RetryCap int
 }
 
-// NewDefaultDelayer creates a DefaultDelayer with base 200ms and retry cap of 7 attempts
+// NewDefaultDelayer creates a DefaultDelayer with base 200ms and a retry cap of 7.
+// RetryCap clamps the delay exponent, never the attempt count: attempts stay
+// unbounded until the context is cancelled or a callback vetoes recovery, while
+// the delay saturates at base * 2^(cap-1).
 func NewDefaultDelayer() DefaultDelayer {
 	return DefaultDelayer{
 		Value:    200 * time.Millisecond,
@@ -143,6 +146,31 @@ func DeliveryDataFrom(d *amqp.Delivery) (data DeliveryData) {
 // CallbackProcessMessages defines a user passed function for processing the received messages.
 // Applications can define their own handler and pass it via [WithChannelOptionProcessor].
 type CallbackProcessMessages func(props *DeliveriesProperties, messages []DeliveryData, mustAck bool, ch *Channel)
+
+// RecordOutcome defines how the library settles a single delivery on the
+// per-record concurrent path. The zero value is [RecordNackRequeue]: an
+// undecided or zero-initialized outcome redelivers the message instead of
+// silently acknowledging it.
+type RecordOutcome int
+
+//go:generate stringer -type=RecordOutcome -linecomment
+const (
+	RecordNackRequeue RecordOutcome = iota // NACK, requeue for redelivery
+	RecordAck                              // ACK, processed
+	RecordNackDrop                         // NACK, drop without requeue
+)
+
+// CallbackProcessRecord defines a user passed function for processing a single
+// received message on the per-record concurrent path.
+// Applications can define their own handler and pass it via
+// [WithChannelOptionProcessRecord].
+//
+// The callback receives no [Channel] and no must-ack flag: the library owns
+// acknowledgment and settles each returned [RecordOutcome] as an individual
+// (multiple=false) wire call. The props.Headers map is a shared reference and
+// must be treated as read-only. Consecutive records may run concurrently, so
+// implementations must be concurrency-safe and must not rely on ordering.
+type CallbackProcessRecord func(props *DeliveriesProperties, message DeliveryData) RecordOutcome
 
 // CallbackWhenRecovering defines a function used prior to recovering a connection.
 // Returns false when want aborting this connection.

@@ -94,11 +94,18 @@ func NewChannel(conn *Connection, optionFuncs ...func(*ChannelOptions)) *Channel
 		paused:    latch.NewLatch(false, opt.name), // active by default
 	}
 
+	// The record callback receives no channel handle, so the fallback needs the
+	// channel receiver to raise its event. A user callback set via
+	// WithChannelOptionProcessRecord is kept.
+	if ch.opt.cbProcessRecord == nil {
+		ch.opt.cbProcessRecord = ch.defaultRecordProcessor
+	}
+
 	go func() {
 		ch.managed.Unlock()
 		defer ch.managed.Lock()
 
-		if !ch.reconnectLoop(false) {
+		if !ch.reconnectLoop() {
 			return
 		}
 		ch.manage()
@@ -235,7 +242,7 @@ func (ch *Channel) recover(err OptionalError, notifierStatus bool) bool {
 	}
 
 	// no err means gracefully closed on demand
-	return err.IsSet() && ch.reconnectLoop(true)
+	return err.IsSet() && ch.reconnectLoop()
 }
 
 // rebase establishes a new base channel to the AMQP server using the given configuration.
@@ -281,11 +288,8 @@ func (ch *Channel) rebase(retry int) bool {
 
 // reconnectLoop is a function that performs a reconnection loop for a given channel.
 //
-// It takes a pointer to a Channel as its parameter, which represents the channel to reconnect, and a boolean
-// value indicating whether the channel is recovering.
-//
 // The function returns a boolean value, which indicates whether the reconnection loop was successful or not.
-func (ch *Channel) reconnectLoop(recovering bool) bool {
+func (ch *Channel) reconnectLoop() bool {
 	retry := 0
 	for {
 		retry = (retry + 1) % 0xFFFF
@@ -296,7 +300,7 @@ func (ch *Channel) reconnectLoop(recovering bool) bool {
 
 		if ch.rebase(retry) {
 			// cannot decide (yet) which infra is critical, let the caller decide via the raised events
-			ch.makeTopology(recovering)
+			ch.makeTopology()
 			return true
 		}
 		// context cancelled; minimum timer as we already waited the connection up in rebase
@@ -308,8 +312,6 @@ func (ch *Channel) reconnectLoop(recovering bool) bool {
 
 // makeTopology creates topology for a channel.
 //
-// The function takes a channel (ch) and a boolean flag (recovering) as parameters.
-//
 // It creates a local isolated channel (chLocal) and handles any errors that occur during this process.
 // It then iterates over the topology of the channel and performs the necessary operations based on the topology configuration.
 //   - if the topology element is an exchange, it declares the exchange using the declareExchange function.
@@ -317,7 +319,7 @@ func (ch *Channel) reconnectLoop(recovering bool) bool {
 //   - if the topology element is marked as a destination, it saves a copy of the name for back reference.
 //
 // Finally, it raises an event for each topology element.
-func (ch *Channel) makeTopology(recovering bool) {
+func (ch *Channel) makeTopology() {
 	// Channels are not concurrent data/usage wise!
 	// prefer using a local isolated channel.
 	chLocal, err := ch.conn.Channel()
@@ -333,7 +335,7 @@ func (ch *Channel) makeTopology(recovering bool) {
 	defer chLocal.Close()
 
 	for _, t := range ch.opt.topology {
-		if !t.Declare || (recovering && t.Durable) {
+		if !t.Declare {
 			continue
 		}
 

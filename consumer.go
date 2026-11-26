@@ -14,16 +14,35 @@ import (
 //
 // It does not return any value.
 func defaultPayloadProcessor(props *DeliveriesProperties, messages []DeliveryData, mustAck bool, ch *Channel) {
+	optError := OptionalError{}
+	if mustAck && len(messages) != 0 {
+		if err := ch.Ack(messages[len(messages)-1].DeliveryTag, true); err != nil {
+			optError = SomeErrFromError(err, true)
+		}
+	}
+
 	Event{
 		SourceType: CliChannel,
 		SourceName: props.ConsumerTag,
 		Kind:       EventMessageReceived,
-		Err:        SomeErrFromString("default processor discards messages"),
+		Err:        optError,
+	}.raise(ch.opt.notifier)
+}
+
+// defaultRecordProcessor is the per-record fallback used when a concurrent
+// consumer channel has no record callback registered.
+//
+// It acknowledges each record by returning [RecordAck] and raises
+// [EventMessageReceived] with no error: the default performs no work that can
+// fail, and the library executes the returned outcome.
+func (ch *Channel) defaultRecordProcessor(props *DeliveriesProperties, message DeliveryData) RecordOutcome {
+	Event{
+		SourceType: CliChannel,
+		SourceName: props.ConsumerTag,
+		Kind:       EventMessageReceived,
 	}.raise(ch.opt.notifier)
 
-	if mustAck && len(messages) != 0 {
-		ch.Ack(messages[len(messages)-1].DeliveryTag, true)
-	}
+	return RecordAck
 }
 
 // Consumer implements an object allowing calling applications
@@ -53,7 +72,10 @@ func NewConsumer(conn *Connection, opt ConsumerOptions, optionFuncs ...func(*Cha
 	useParams := ChanUsageParameters{
 		ConsumerUsageOptions: opt.ConsumerUsageOptions,
 	}
-	chanOpt := append(optionFuncs, WithChannelOptionUsageParams(useParams))
+	// copy first so the caller-owned variadic backing array is never mutated;
+	// usage params stay last so they override any user-supplied ones.
+	chanOpt := append(append([]func(*ChannelOptions){}, optionFuncs...),
+		WithChannelOptionUsageParams(useParams))
 
 	return &Consumer{
 		channel: NewChannel(conn, chanOpt...),

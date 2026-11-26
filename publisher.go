@@ -40,16 +40,20 @@ type Publisher struct {
 // defaultNotifyPublish provides a base implementation of [CallbackNotifyPublish] which can be
 // overwritten with [WithChannelOptionNotifyPublish]. If confirm.Ack is false
 // it sends an [EventMessagePublished] kind of event over the notification channel
-// (see [WithChannelOptionNotification]) with a literal error containing the delivery tag.
+// (see [WithChannelOptionNotification]) with a literal error containing the delivery tag;
+// on success the event is raised with no error set.
 func defaultNotifyPublish(confirm amqp.Confirmation, ch *Channel) {
-	// FIXME this may get too noisy! Perhaps restrict via some on/off flag?
+	optError := OptionalError{}
+	if !confirm.Ack {
+		optError = SomeErrFromString(
+			fmt.Sprintf("delivery tag %d confirmation %v", confirm.DeliveryTag, confirm.Ack),
+		)
+	}
 	Event{
 		SourceType: CliChannel,
 		SourceName: ch.opt.name,
 		Kind:       EventMessagePublished,
-		Err: SomeErrFromString(
-			fmt.Sprintf("delivery tag %d confirmation %v", confirm.DeliveryTag, confirm.Ack),
-		),
+		Err:        optError,
 	}.raise(ch.opt.notifier)
 }
 
@@ -79,7 +83,10 @@ func NewPublisher(conn *Connection, opt PublisherOptions, optionFuncs ...func(*C
 	useParams := ChanUsageParameters{
 		PublisherUsageOptions: opt.PublisherUsageOptions,
 	}
-	chanOpt := append(optionFuncs, WithChannelOptionUsageParams(useParams))
+	// copy first so the caller-owned variadic backing array is never mutated;
+	// usage params stay last so they override any user-supplied ones.
+	chanOpt := append(append([]func(*ChannelOptions){}, optionFuncs...),
+		WithChannelOptionUsageParams(useParams))
 
 	return &Publisher{
 		channel: NewChannel(conn, chanOpt...),

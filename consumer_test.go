@@ -117,22 +117,21 @@ func MsgHandlerQoS(
 	}
 }
 
-func MsgHandlerSlow(count *SafeCounter, delay time.Duration) CallbackProcessMessages {
-	return func(props *DeliveriesProperties, messages []DeliveryData, mustAck bool, ch *Channel) {
+// MsgHandlerSlow is the slow-record variant of the per-record callback: it
+// counts invocations, spends delay in user code, and leaves settlement to the
+// library. It is used by the concurrent recovery and shutdown scenarios.
+func MsgHandlerSlow(count *SafeCounter, delay time.Duration) CallbackProcessRecord {
+	return func(props *DeliveriesProperties, message DeliveryData) RecordOutcome {
 		count.Add(1)
-		if mustAck {
-			idxLast := len(messages) - 1
-			lastDeliveryTag := messages[idxLast].DeliveryTag
-			ch.Ack(lastDeliveryTag, true)
-		}
 		<-time.After(delay)
+		return RecordAck
 	}
 }
 
 // TestBatchConsumer evaluates if several processing repeats over a broken connection
 // successfully reads all messages, eventually. For this scenario, large batches are split into two parts: one ACKed
 // and the other rejected, randomly selected for ACK-ing. Over several attempts,
-// the chunk size is reduced sufficiently (ref.FULL_BATCH_ACK_THRESHOLD) for the whole batch to be ACKed.
+// the batch size is reduced sufficiently (ref.FULL_BATCH_ACK_THRESHOLD) for the whole batch to be ACKed.
 func TestBatchConsumer(t *testing.T) {
 	QueueName := "workload_consumer_batch"
 	const MSG_COUNT = 2345
@@ -429,7 +428,7 @@ func TestConsumerOptions(t *testing.T) {
 	ARG := make(amqp.Table)
 	ARG["foo"] = "bar"
 
-	statusCh := make(chan Event, 16)
+	statusCh := make(chan Event, 2*MSG_COUNT)
 
 	validators := []trace.TraceValidator{
 		{
@@ -606,5 +605,91 @@ func TestConsumerOptions(t *testing.T) {
 	}
 	if !alphaConsumer.AwaitStatus(false, LongPoll.Timeout) {
 		t.Error("consumer should be done/closed")
+	}
+}
+
+// TestConcurrentConsumerRecordDispatch is the T11 tracer bullet: a concurrent
+// consumer processes records individually, settles each one, and never arms the
+// sequential flush timer.
+func TestConcurrentConsumerRecordDispatch(t *testing.T) {
+	QueueName := "workload_consumer_concurrent"
+	const MSG_COUNT = 24
+	const PREFETCH_COUNT = 4
+	const WORKERS = 2
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	statusCh := make(chan Event, 128)
+	chCounters := &EventCounters{
+		Up:            &SafeCounter{},
+		DataExhausted: &SafeCounter{},
+	}
+	go procStatusEvents(ctx, statusCh, chCounters, nil)
+
+	conn := NewConnection(
+		CONN_ADDR_RMQ_LOCAL, amqp.Config{},
+		WithConnectionOptionContext(ctx),
+		WithConnectionOptionNotification(statusCh),
+		WithConnectionOptionName("conn.consumer.concurrent"),
+	)
+	defer AwaitConnectionManagerDone(conn)
+	defer conn.Close()
+
+	topos := []*TopologyOptions{{
+		Name:          QueueName,
+		Durable:       true,
+		Declare:       true,
+		IsDestination: true,
+	}}
+
+	registry := NewSafeRegisterMap()
+	optConsumer := DefaultConsumerOptions()
+	optConsumer.
+		WithQueue(QueueName).
+		WithPrefetchCount(PREFETCH_COUNT).
+		WithProcessorConcurrency(WORKERS)
+
+	consumer := NewConsumer(conn, optConsumer,
+		WithChannelOptionName("chan.concurrent"),
+		WithChannelOptionTopology(topos),
+		WithChannelOptionProcessRecord(func(props *DeliveriesProperties, message DeliveryData) RecordOutcome {
+			registry.Set(string(message.Body), "record")
+			return RecordAck
+		}),
+	)
+	defer consumer.Channel().QueueDelete(QueueName, false, false, true)
+	defer consumer.Close()
+
+	if !consumer.AwaitStatus(true, LongPoll.Timeout) {
+		t.Fatal("concurrent consumer not ready")
+	}
+
+	optPub := DefaultPublisherOptions()
+	optPub.WithKey(QueueName).WithContext(ctx)
+	publisher := NewPublisher(conn, optPub, WithChannelOptionName("chan.concurrent.publisher"))
+	defer publisher.Close()
+	if !publisher.AwaitStatus(true, LongPoll.Timeout) {
+		t.Fatal("publisher not ready")
+	}
+	if _, err := PublishMsgBulkOptions(publisher, optPub, MSG_COUNT, "exch.concurrent"); err != nil {
+		t.Error(err)
+	}
+
+	if !ConditionWait(ctx, registry.LenEquals(MSG_COUNT), LongPoll) {
+		t.Fatalf("timeout processing records: %d/%d", registry.Length(), MSG_COUNT)
+	}
+
+	// The concurrent path has no batch-fill timer and must not raise flush events.
+	if got := chCounters.DataExhausted.Value(); got != 0 {
+		t.Errorf("concurrent path raised %d EventDataExhausted events, want 0", got)
+	}
+
+	// Closing the consumer must let the manager exit.
+	if err := consumer.Close(); err != nil {
+		t.Errorf("consumer close: %v", err)
+	}
+	if !consumer.AwaitManager(false, DefaultPoll.Timeout) {
+		t.Error("consumer manager did not exit after Close")
 	}
 }

@@ -10,24 +10,24 @@ func TestEventType_String(t *testing.T) {
 		i    EventType
 		want string
 	}{
-		{ "EventUp", EventUp, "Up"},
-		{ "EventDown", EventDown, "Down"},
-		{ "EventCannotEstablish", EventCannotEstablish, "CannotEstablish"},
-		{ "EventBlocked", EventBlocked, "Blocked"},
-		{ "EventUnBlocked", EventUnBlocked, "UnBlocked"},
-		{ "EventClosed", EventClosed, "Closed"},
-		{ "EventMessageReceived", EventMessageReceived, "MessageReceived"},
-		{ "EventMessagePublished", EventMessagePublished, "MessagePublished"},
-		{ "EventMessageReturned", EventMessageReturned, "MessageReturned"},
-		{ "EventConfirm", EventConfirm, "Confirm"},
-		{ "EventQos", EventQos, "Qos"},
-		{ "EventConsume", EventConsume, "Consume"},
-		{ "EventDefineTopology", EventDefineTopology, "DefineTopology"},
-		{ "EventDataExhausted", EventDataExhausted, "DataExhausted"},
-		{ "EventDataPartial", EventDataPartial, "DataPartial"},
+		{"EventUp", EventUp, "Up"},
+		{"EventDown", EventDown, "Down"},
+		{"EventCannotEstablish", EventCannotEstablish, "CannotEstablish"},
+		{"EventBlocked", EventBlocked, "Blocked"},
+		{"EventUnBlocked", EventUnBlocked, "UnBlocked"},
+		{"EventClosed", EventClosed, "Closed"},
+		{"EventMessageReceived", EventMessageReceived, "MessageReceived"},
+		{"EventMessagePublished", EventMessagePublished, "MessagePublished"},
+		{"EventMessageReturned", EventMessageReturned, "MessageReturned"},
+		{"EventConfirm", EventConfirm, "Confirm"},
+		{"EventQos", EventQos, "Qos"},
+		{"EventConsume", EventConsume, "Consume"},
+		{"EventDefineTopology", EventDefineTopology, "DefineTopology"},
+		{"EventDataExhausted", EventDataExhausted, "DataExhausted"},
+		{"EventDataPartial", EventDataPartial, "DataPartial"},
 		//----------------
-		{ "out-of-bound-lower", EventUp - 1, "EventType(-1)"},
-		{ "out-of-bound-upper", EventDataPartial + 1, "EventType(15)"},		
+		{"out-of-bound-lower", EventUp - 1, "EventType(-1)"},
+		{"out-of-bound-upper", EventDataPartial + 1, "EventType(15)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

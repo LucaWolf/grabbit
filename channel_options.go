@@ -23,6 +23,7 @@ type ChannelOptions struct {
 	cbNotifyPublish   CallbackNotifyPublish   // publish notification handler
 	cbNotifyReturn    CallbackNotifyReturn    // returned message notification handler
 	cbProcessMessages CallbackProcessMessages // user defined message processing routine
+	cbProcessRecord   CallbackProcessRecord   // user defined per-record processing routine (concurrent path)
 	topology          []*TopologyOptions      // the _whole_ infrastructure involved as array of queues and exchanges
 	implParams        ChanUsageParameters     // implementation trigger for publishers or consumers
 	ctx               context.Context         // cancellation context
@@ -114,6 +115,19 @@ func WithChannelOptionNotifyReturn(returnNotifier CallbackNotifyReturn) func(opt
 func WithChannelOptionProcessor(proc CallbackProcessMessages) func(options *ChannelOptions) {
 	return func(options *ChannelOptions) {
 		options.cbProcessMessages = proc
+	}
+}
+
+// WithChannelOptionProcessRecord stores the application provided handler for
+// processing individual messages on the per-record concurrent path
+// (see [ConsumerOptions.WithProcessorConcurrency]).
+//
+// The record callback is used only when ProcessorConcurrency is positive on the
+// channel's consumer usage parameters. At zero the batch callback registered via
+// [WithChannelOptionProcessor] is used and this one is ignored.
+func WithChannelOptionProcessRecord(proc CallbackProcessRecord) func(options *ChannelOptions) {
+	return func(options *ChannelOptions) {
+		options.cbProcessRecord = proc
 	}
 }
 

@@ -213,6 +213,36 @@ func TestConnectionDelayerCancelled(t *testing.T) {
 
 }
 
+func TestConnectionCancelBeforeEstablishment(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	recoveringCallbackCounter.Reset()
+
+	// rejected credentials keep the reconnect loop retrying; the connection is
+	// never established, so cancellation must still terminate the manage goroutine.
+	conn := NewConnection(
+		CONN_ADDR_RMQ_REJECT_PWD, amqp.Config{},
+		WithConnectionOptionName("conn.cancel.before.establishment"),
+		WithConnectionOptionRecovering(connReconnectCB),
+		WithConnectionOptionContext(ctx),
+	)
+	defer conn.Close()
+
+	if !ConditionWait(ctx, recoveringCallbackCounter.NotZero, DefaultPoll) {
+		t.Fatal("timeout waiting for the reconnect loop to start")
+	}
+	if conn.Connection().IsSet() {
+		t.Fatal("connection should not have been established")
+	}
+
+	cancel()
+
+	if !conn.AwaitManager(false, DefaultPoll.Timeout) {
+		t.Fatal("manage goroutine did not exit after cancellation before establishment")
+	}
+}
+
 func TestConnectionCloseContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

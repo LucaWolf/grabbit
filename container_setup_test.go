@@ -208,6 +208,87 @@ func wgDoneOrTimeout(wg *sync.WaitGroup, timeout time.Duration) bool {
 	}
 }
 
+// concurrencyTracker records the peak number of record callbacks executing at
+// the same time. It is the observation point for the concurrency bound tests.
+type concurrencyTracker struct {
+	mu      sync.Mutex
+	current int
+	max     int
+}
+
+func (c *concurrencyTracker) Enter() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.current++
+	if c.current > c.max {
+		c.max = c.current
+	}
+}
+
+func (c *concurrencyTracker) Exit() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.current--
+}
+
+func (c *concurrencyTracker) Current() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.current
+}
+
+func (c *concurrencyTracker) Max() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.max
+}
+
+// awaitInFlightZero waits until no record callback is executing. Unlike
+// wgDoneOrTimeout it starts no helper goroutine, so a timed-out wait cannot
+// itself leak (the pool joins on callback return, never on this wait).
+func awaitInFlightZero(ctx context.Context, tracker *concurrencyTracker, poll EvtPollingPolicy) bool {
+	return ConditionWait(ctx, func() bool {
+		return tracker.Current() == 0
+	}, poll)
+}
+
+// queueStats reads the management view of a queue in the default vhost.
+// 'ready' excludes messages delivered but not yet settled; 'unacked' counts
+// exactly those.
+func (r RMQC) queueStats(queue string) (ready, unacked int, err error) {
+	rec, err := r.Cli.GetQueue("/", queue)
+	if err != nil {
+		return 0, 0, err
+	}
+	return rec.Messages, rec.MessagesUnacknowledged, nil
+}
+
+// awaitQueueDrained polls until the queue has neither ready nor unacknowledged
+// messages. It uses the management API because an idle consumer's channel no
+// longer sees deliveries once every record has been settled.
+func (r RMQC) awaitQueueDrained(queue string, poll EvtPollingPolicy) bool {
+	return ConditionWait(context.Background(), func() bool {
+		ready, unacked, err := r.queueStats(queue)
+		return err == nil && ready == 0 && unacked == 0
+	}, poll)
+}
+
+// requireQueueDrained fails the test with the management view when a queue
+// still holds ready or unacknowledged messages.
+func (r RMQC) requireQueueDrained(t *testing.T, queue string, poll EvtPollingPolicy) {
+	t.Helper()
+
+	if r.awaitQueueDrained(queue, poll) {
+		return
+	}
+	ready, unacked, err := r.queueStats(queue)
+	t.Errorf("queue %s not drained: ready=%d unacked=%d err=%v", queue, ready, unacked, err)
+}
+
 // ConditionWait tests for the `cond` condition until it happens (true) or timeout expires (false).
 // Zero values for `timeout` and `pollFreq` defaults to 7.5 sec and 330 ms respectively.
 // The tested condition should not block, i.e. wg.Wait() is not a good candidate. Ideally the
@@ -375,7 +456,7 @@ func (c *SafeCounter) Register(registries *sync.Map, when bool) {
 }
 
 // RegisteredAdd deduplicates 'Add' by testing if the record in 'registries' has not already got a 'key'.
-// Falls back to regualat addition when not tracked in 'registries' of interest.
+// Falls back to regualar addition when not tracked in 'registries' of interest.
 func (c *SafeCounter) RegisteredAdd(registries *sync.Map, key string, delta int) {
 	if register, ok := registries.Load(c.tag); ok {
 		record := register.(*SafeRegisterMap)
@@ -472,6 +553,7 @@ type EventCounters struct {
 	Closed        *SafeCounter // EventClosed
 	BadRecovery   *SafeCounter // EventCannotEstablish
 	DataExhausted *SafeCounter // EventDataExhausted
+	DataPartial   *SafeCounter // EventDataPartial
 	MsgPublished  *SafeCounter // EventMessagePublished
 	MsgReceived   *SafeCounter // EventMessageReceived
 	Topology      *SafeCounter // EventDefineTopology
@@ -599,6 +681,10 @@ func procStatusEvents(
 			case EventDataExhausted:
 				if eventCounters.DataExhausted != nil {
 					eventCounters.DataExhausted.RegisteredAdd(registries, event.SourceName, 1)
+				}
+			case EventDataPartial:
+				if eventCounters.DataPartial != nil {
+					eventCounters.DataPartial.RegisteredAdd(registries, event.SourceName, 1)
 				}
 			case EventMessagePublished:
 				if eventCounters.MsgPublished != nil {

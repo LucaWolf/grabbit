@@ -1,7 +1,7 @@
 # grabbit
 Golang wrapper for RabbitMQ managed connections.
 
-Version 1.1.4 (requires Go 1.21 or above).<br>
+Version 1.2.0 (requires Go 1.25.7 or above).<br>
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/LucaWolf/grabbit.svg)](https://pkg.go.dev/github.com/LucaWolf/grabbit)
 [![Go Coverage](https://github.com/LucaWolf/grabbit/wiki/coverage.svg)](https://raw.githack.com/wiki/LucaWolf/grabbit/coverage.html)
@@ -30,7 +30,7 @@ What I'd like this library to provide is:
   - [x] replace the internal logging with an alternative. Current thought is to have some
       buffered channel over which detailed events are submitted (non-blocking)
   - [x] have the topology defined by consumers and publishers. Once when creating and then
-      during channels recovery (ephemeral queues/exchanges only)
+      during channels recovery (durable and ephemeral queues/exchanges)
   - [x] provide an optional callback to the caller space during recoveries. This supplements
      in a synchronous (blocking) mode the logging replacement mechanism.
   - [x] awaiting confirmation of the published events via deferred methods (PublishDeferredConfirm
@@ -38,13 +38,17 @@ What I'd like this library to provide is:
   - [x] consumers to accept user defined handlers for processing the received messages
   - [x] the consumer handlers to also allow batch processing (with support for 
       partial fulfillment of QoS expectations based on a timeout)
+  - [x] optionally dispatch each delivery to a bounded per-record worker pool, with
+      library-owned acknowledgment (ack / nack-requeue / nack-drop)
   - [x] Bonus: optionally provide the users with access to the low level `amqp.Channel`. **Unsafe**
       initially. **Note**: safety comes for free if using the slightly higher level `grabbit.Channel` wrappers.
 
 ## Non goals
 
   * not interested in concurrency safety of the high level publisher and consumers. These are relatively 
-   cheap therefore use plenty as needed, instead of passing them across coroutines.
+   cheap therefore use plenty as needed, instead of passing them across coroutines. The concurrent
+   consumer option runs *user record processors* concurrently; it does not make the `Publisher` or
+   `Consumer` objects themselves safe to share across goroutines.
 
 ## Credits
 
