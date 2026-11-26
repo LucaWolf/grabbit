@@ -1,16 +1,5 @@
 package grabbit
 
-import (
-	"sync"
-)
-
-// SafeBool wraps a boolean in a concurrency safe way so it can
-// be set, reset and tested from different coroutines.
-type SafeBool struct {
-	value bool
-	mu    sync.RWMutex
-}
-
 // ClientType defines the class of objects that interact with the amqp functionality.
 // Used mostly for sending alerts about specific functionality areas.
 type ClientType int

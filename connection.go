@@ -29,13 +29,6 @@ func (conn *Connection) AwaitManager(active bool, timeout time.Duration) bool {
 	return awaitOnLatch(&conn.managed, conn.opt.ctx, active, timeout)
 }
 
-// AwaitAvailable waits till the connection is established or timeout expires.
-//
-// Deprecated: replaced by AwaitStatus.
-func (conn *Connection) AwaitAvailable(timeout time.Duration) bool {
-	return conn.AwaitStatus(true, timeout)
-}
-
 // AwaitStatus waits till the connection is in the desired state or timeout expires.
 // Pass 'true' for testing open/ready, 'false' for testing if closed.
 //
