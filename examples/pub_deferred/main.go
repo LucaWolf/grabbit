@@ -214,6 +214,6 @@ func main() {
 		close(done)
 	}()
 
-	log.Println("awaiting signal")
+	log.Println("done: 12 messages confirmed (7 one-by-one, 5 bulk); awaiting SIGINT/SIGTERM to shut down")
 	<-done
 }

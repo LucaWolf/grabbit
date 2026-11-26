@@ -1,14 +1,14 @@
 # `examples/pub_deferred` — Component Package (Peanut)
 
 > EGM contract for `/home/luci/projects/go/grabbit/examples/pub_deferred`.
-> **Classification:** Component Package (Peanut) — standalone leaf demo module; nothing imports it.
-> **Files:** `.gitignore`, `go.mod`, `go.sum`, `main.go` (the only source file). No `*_test.go` files exist.
-> **Module path quirk:** `go.mod` declares module **`pub_deferred_confirm`** — not equal to the directory name `pub_deferred`.
+> **Classification:** Component Package (Peanut) — leaf `package main` demo within the root module; nothing imports it.
+> **Files:** `main.go` (the only source file). No `*_test.go` files exist.
 > **Generated:** 2026-11-22 by the EGM bootstrap worker. Parent blueprint: [`../CONTEXT.md`](../CONTEXT.md).
 
 ## Overview
 
-A self-contained demo module (module path **`pub_deferred_confirm`**, `go 1.21`) whose single
+A self-contained `package main` demo (import path
+`github.com/LucaWolf/grabbit/examples/pub_deferred`), part of the root module, whose single
 `package main` program demonstrates **deferred publish confirmations** in grabbit: end-to-end broker
 acknowledgement of each published message via
 `Publisher.PublishDeferredConfirm` → `*DeferredConfirmation` →
@@ -58,11 +58,9 @@ embed ANSI color escapes and render the request sequence vs. broker delivery tag
 | `PublishMsgBulk` | `func(pub *grabbit.Publisher, records int)` | Publish all, then await confirmations in publish order. |
 | `CONF_DELAY` | `const CONF_DELAY = 7 * time.Second` | Per-confirmation await timeout. |
 
-**Module wiring** (`go.mod`): module path **`pub_deferred_confirm`** (≠ directory name
-`pub_deferred`), `go 1.21`; requires `github.com/LucaWolf/grabbit v0.0.0-20221102051845-2eb228c3ab34`
-and `github.com/rabbitmq/amqp091-go v1.9.0`;
-`replace github.com/LucaWolf/grabbit => ../../../grabbit` pins the demo to the **local repo
-checkout**. `.gitignore` ignores the compiled binary `pub_deferred_confirm`.
+**Module wiring:** part of the root module `github.com/LucaWolf/grabbit`; import path
+`github.com/LucaWolf/grabbit/examples/pub_deferred`. No separate `go.mod`, `go.sum`, or per-example
+`.gitignore`; dependencies come from the root module.
 
 **grabbit API exercised** (identifiers verified against the library source):
 
@@ -132,34 +130,26 @@ checkout**. `.gitignore` ignores the compiled binary `pub_deferred_confirm`.
   - `Not in confirmation mode (no DeferredConfirmation available).` (Disabled branch)
   - `publisher.notification: ` / `=========================================` separators /
     `publisher not ready yet` / `app closing connection and dependencies` /
-    `cannot close publisher: ` / `cannot close conn: ` / `awaiting signal` / `EXIT`
+    `cannot close publisher: ` / `cannot close conn: ` /
+    `done: 12 messages confirmed (7 one-by-one, 5 bulk); awaiting SIGINT/SIGTERM to shut down` / `EXIT`
 
 ## Verification
 
-This module contains **no test files** (`*_test.go` count: 0), so the check is compile-only:
+This package contains **no test files** (`*_test.go` count: 0), so the check is compile-only:
 
 ```sh
-cd /home/luci/projects/go/grabbit/examples/pub_deferred
-go test ./...   # compiles the demo package; runs no tests
+go build ./examples/pub_deferred
+go test ./examples/pub_deferred   # compiles the demo package; runs no tests
 ```
-
-**Build prerequisite (verified statically against the current tree):** this module's pins predate
-the current library checkout. Its `go.mod` requires `amqp091-go v1.9.0` while the replaced root
-module now requires `v1.10.0` (module resolution selects the higher version), and its `go.sum` has
-no entry for `go-notifying-latch v1.1.0`, which the library's non-test code now imports
-(`connection.go`, `channel.go`, `utils.go`). Under Go's default read-only module mode,
-`go test ./...` / `go build ./...` may therefore fail with *missing `go.sum` entry* errors until
-`go mod tidy` (or `go mod download`) is run in this directory. The replaced module's `go 1.25.7`
-directive also means a Go toolchain ≥ 1.25.7 is required, even though this module declares
-`go 1.21`.
 
 **Actually running the demo requires a live RabbitMQ broker** reachable at
 `amqp://guest:guest@localhost`:
 
 ```sh
-go run .
+go run ./examples/pub_deferred
 ```
 
 Expected: 7 one-by-one confirmations, then 5 bulk confirmations (green `ACK` outcome lines against
-a healthy broker), then `awaiting signal`; `Ctrl-C` triggers the close sequence (5 expected
+a healthy broker), then `done: 12 messages confirmed (7 one-by-one, 5 bulk); awaiting
+SIGINT/SIGTERM to shut down`; `Ctrl-C` triggers the close sequence (5 expected
 post-close publish failures) and finally `EXIT`.

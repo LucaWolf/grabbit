@@ -68,6 +68,9 @@ func BodySlice(messages []grabbit.DeliveryData, ch chan grabbit.DeliveryPayload)
 	return string(bytes.Join(bodies, []byte(",")))
 }
 
+// MsgHandler exercises the sequential batch model, including bulk settlement
+// (multiple=true). The concurrent record model settles each record with
+// multiple=false and ignores a batch processor; see examples/per_record.
 func MsgHandler(rnd *rand.Rand, mu *sync.Mutex, chReg chan grabbit.DeliveryPayload) grabbit.CallbackProcessMessages {
 	return func(props *grabbit.DeliveriesProperties, messages []grabbit.DeliveryData, mustAck bool, ch *grabbit.Channel) {
 		if !mustAck {
@@ -207,7 +210,7 @@ func main() {
 		close(done)
 	}()
 
-	log.Println("awaiting signal")
+	log.Println("demo running: 500 messages published with four consumers; awaiting SIGINT/SIGTERM to run the final ACK check")
 	// if we restart the Rabbit engine we should get
 	// all the topology recreated when conn/channels recovery has completed
 	<-done

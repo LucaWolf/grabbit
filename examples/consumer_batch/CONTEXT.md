@@ -1,7 +1,7 @@
 # `examples/consumer_batch` — Component Package Contract
 
-> **Classification:** Component Package (Peanut) — leaf, standalone executable demo module.
-> No subdirectories, no test files, no exported API: this module is reference material for
+> **Classification:** Component Package (Peanut) — leaf `package main` demo within the root module.
+> No subdirectories, no test files, no exported API: this package is reference material for
 > humans showing batch consumption with grabbit's processor callback; it is not imported by any
 > other package.
 
@@ -17,17 +17,12 @@ program verifies that all 500 messages were ACK-ed exactly once, flagging duplic
 missing entries. The demo also shows topology declaration via `WithChannelOptionTopology` and
 the publisher's returned-message callback.
 
-Module facts (from `go.mod` / `go.sum` / `.gitignore`):
+Module facts:
 
-- Own Go module: `module consumer_batch`, `go 1.21` — this directory is **not** part of the
-  root module's package graph; the root module's `go test ./...` does not compile it.
-- Requires `github.com/LucaWolf/grabbit v0.0.0-20221102051845-2eb228c3ab34` with
-  `replace github.com/LucaWolf/grabbit => ../../../grabbit` — the demo compiles against the
-  **local working-tree copy** of the library, not the published version.
-- Requires `github.com/rabbitmq/amqp091-go v1.9.0`; `go.sum` additionally pins
-  `go.uber.org/goleak v1.2.1` (pulled in via the local grabbit tree).
-- `.gitignore` contains `consumer_batch` (the compiled binary produced by `go build` in this
-  directory).
+- Part of the root module `github.com/LucaWolf/grabbit`; import path
+  `github.com/LucaWolf/grabbit/examples/consumer_batch`.
+- No separate `go.mod`, `go.sum`, or per-example `.gitignore`; dependencies come from the
+  root module (Go 1.25.7, `amqp091-go` v1.10.0, `go-notifying-latch` v1.1.0).
 
 ## Interface
 
@@ -176,20 +171,13 @@ configuration is hardcoded:
 
 ## Verification
 
-- **Compile-only check:** `go test ./...` — there are no test files in this module, so the
-  command only verifies that the package compiles (`ok consumer_batch [no test files]`). Run it
-  **inside this directory**; being a standalone module, it is not covered by the root module's
-  `go test ./...`.
-- `go build ./...` compiles the `consumer_batch` binary (ignored via `.gitignore`).
-- **Running the demo:** `go run .` requires a live RabbitMQ broker at
+- **Compile-only check:** from the repository root run `go build ./examples/consumer_batch` and
+  `go test ./examples/consumer_batch`; there are no test files, so the test command only verifies
+  compilation.
+- `make examples` builds every demo into `bin/`.
+- **Running the demo:** `go run ./examples/consumer_batch` requires a live RabbitMQ broker at
   `amqp://guest:guest@localhost` with guest/guest credentials. The program publishes and
   processes 500 messages, then waits for Ctrl-C; the expected observable outcome is the green
   `OK all messages were registered fine.` line after shutdown (any duplicate/missing report is
   a demo failure signal).
-- **Dependency caveat:** the `replace` directive resolves grabbit to the local working tree,
-  whose `go.mod` currently requires `amqp091-go v1.10.0` and `go-notifying-latch v1.1.0`,
-  while this module's `go.sum` pins `amqp091-go v1.9.0` / `goleak v1.2.1` and lacks
-  `go-notifying-latch` entirely. If the compile check reports missing `go.sum` entries, run
-  `go mod tidy` here first. The replaced root module's `go 1.25.7` directive also means a Go
-  toolchain ≥ 1.25.7 (or GOTOOLCHAIN auto-switching) is required, even though this module
-  declares `go 1.21`.
+- **Dependencies:** inherited from the root `go.mod`; no per-example `go mod tidy` is needed.

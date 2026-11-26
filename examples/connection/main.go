@@ -75,6 +75,6 @@ func main() {
 		close(done)
 	}()
 
-	fmt.Println("awaiting signal")
+	fmt.Println("done: managed connection is up; awaiting SIGINT/SIGTERM to shut down")
 	<-done
 }

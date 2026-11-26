@@ -19,6 +19,23 @@ Please use the [wiki](https://github.com/LucaWolf/grabbit/wiki#how-tos) page for
 the most out of this library. We also have a DeepWiki page for the
  [core concepts](https://deepwiki.com/LucaWolf/grabbit/2-core-components)'s architecture and more.
 
+## Examples
+Ten runnable demos live in [`examples/`](./examples/README.md), covering connection and
+channel lifecycle, context ownership, publishing (routing and confirmations), batch
+consumers, and per-record concurrent consumers.
+
+The quickest way to run them is with the bundled, Podman-managed LavinMQ HA cluster:
+
+```sh
+make lavinmq-up
+make run EXAMPLE=consumer
+make lavinmq-down
+```
+
+See [`examples/README.md`](./examples/README.md) for the catalog, broker options, and
+the individual run commands. Any RabbitMQ-compatible broker at
+`amqp://guest:guest@localhost:5672/` works as well.
+
 ## Goals
 What I'd like this library to provide is:
 

@@ -140,6 +140,6 @@ func main() {
 		close(done)
 	}()
 
-	log.Println("awaiting signal")
+	log.Println("done: 5 messages published; awaiting SIGINT/SIGTERM to shut down")
 	<-done
 }

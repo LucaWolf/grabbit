@@ -1,12 +1,15 @@
 // Command per_record demonstrates grabbit's per-record concurrent consumer
 // dispatch. It publishes a small workload, consumes it with a bounded record
 // worker pool, and prints the outcome of every record plus a final summary.
+//
+// JSON logging uses log/slog. grabbit itself performs no logging: it raises events
+// and callbacks, and this demo bridges them into the application's logger.
 package main
 
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strconv"
@@ -27,6 +30,63 @@ const (
 	recordDelay  = 200 * time.Millisecond
 	runTimeout   = 60 * time.Second
 )
+
+// slog has DEBUG, INFO, WARN, and ERROR built in. TRACE is a custom level one
+// step below DEBUG, labelled "TRACE" by replaceLevel below.
+const levelTrace slog.Level = slog.LevelDebug - 4
+
+func replaceLevel(groups []string, a slog.Attr) slog.Attr {
+	if len(groups) == 0 && a.Key == slog.LevelKey {
+		if level, ok := a.Value.Any().(slog.Level); ok && level <= levelTrace {
+			a.Value = slog.StringValue("TRACE")
+		}
+	}
+	return a
+}
+
+func logTrace(msg string, args ...any) {
+	slog.Log(context.Background(), levelTrace, msg, args...)
+}
+
+// eventLevel maps a grabbit lifecycle event to a slog level. The library never
+// logs; it raises events, and the application decides how to record them.
+func eventLevel(event grabbit.Event) slog.Level {
+	switch event.Kind {
+	case grabbit.EventConfirm, grabbit.EventQos, grabbit.EventConsume:
+		return slog.LevelError
+	case grabbit.EventDefineTopology:
+		if event.Err.IsSet() {
+			return slog.LevelError
+		}
+		return slog.LevelDebug
+	case grabbit.EventCannotEstablish, grabbit.EventBlocked,
+		grabbit.EventMessageReturned:
+		return slog.LevelWarn
+	case grabbit.EventDown, grabbit.EventClosed,
+		grabbit.EventMessagePublished, grabbit.EventMessageReceived:
+		if event.Err.IsSet() {
+			return slog.LevelWarn
+		}
+		return slog.LevelDebug
+	default:
+		return slog.LevelDebug
+	}
+}
+
+func eventAttrs(event grabbit.Event) []any {
+	attrs := []any{
+		"source_type", event.SourceType.String(),
+		"source", event.SourceName,
+		"kind", event.Kind.String(),
+	}
+	if event.TargetName != "" {
+		attrs = append(attrs, "target", event.TargetName)
+	}
+	if event.Err.IsSet() {
+		attrs = append(attrs, "error", event.Err.Error())
+	}
+	return attrs
+}
 
 // outcomeStats tracks the callback attempts and terminal outcomes. It is the
 // demo's proof that the worker pool overlaps records and that every message
@@ -123,7 +183,8 @@ func recordProcessor(stats *outcomeStats, done chan<- struct{}) grabbit.Callback
 	return func(props *grabbit.DeliveriesProperties, message grabbit.DeliveryData) grabbit.RecordOutcome {
 		idx, err := strconv.Atoi(message.MessageId)
 		if err != nil {
-			log.Printf("record %q has a non-numeric MessageId; treating it as poison", message.MessageId)
+			slog.Warn("record has a non-numeric MessageId; treating it as poison",
+				"record", message.MessageId)
 			idx = -1
 		}
 
@@ -154,9 +215,16 @@ func recordProcessor(stats *outcomeStats, done chan<- struct{}) grabbit.Callback
 		}
 
 		terminal, complete := stats.trackOutcome(idx, outcome)
-		log.Printf("[%s] record %s: %s (redelivered=%v, in-flight=%d) -> %s [%d/%d terminal]",
-			props.ConsumerTag, message.MessageId, reason, message.Redelivered,
-			inFlight, outcome, terminal, messageCount,
+		logTrace("record processed",
+			"consumer", props.ConsumerTag,
+			"record", message.MessageId,
+			"delivery_tag", message.DeliveryTag,
+			"reason", reason,
+			"redelivered", message.Redelivered,
+			"in_flight", inFlight,
+			"outcome", outcome.String(),
+			"terminal", terminal,
+			"total", messageCount,
 		)
 		if complete {
 			select {
@@ -190,6 +258,17 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+		Level:       levelTrace,
+		ReplaceAttr: replaceLevel,
+	})))
+	slog.Info("demo starting",
+		"broker", brokerURL,
+		"queue", queueName,
+		"messages", messageCount,
+		"workers", workers,
+	)
+
 	events := make(chan grabbit.Event, 32)
 	go func() {
 		for {
@@ -197,7 +276,7 @@ func main() {
 			case <-ctx.Done():
 				return
 			case event := <-events:
-				log.Println("notification:", event)
+				slog.Log(ctx, eventLevel(event), "grabbit event", eventAttrs(event)...)
 			}
 		}
 	}()
@@ -227,24 +306,24 @@ func main() {
 		grabbit.WithChannelOptionTopology(topos),
 	)
 	if !publisher.AwaitStatus(true, 30*time.Second) {
-		log.Print("publisher not ready")
+		slog.Error("publisher not ready")
 		cancel()
 		return
 	}
 	// Keep reruns deterministic: no messages left over from a previous run.
 	if purged, err := publisher.Channel().QueuePurge(queueName, false); err != nil {
-		log.Printf("queue purge: %v", err)
+		slog.Error("queue purge failed", "error", err)
 	} else if purged != 0 {
-		log.Printf("purged %d stale records", purged)
+		logTrace("purged stale records", "count", purged)
 	}
 	if err := publishMessages(publisher); err != nil {
-		log.Printf("publish: %v", err)
+		slog.Error("publish failed", "error", err)
 		cancel()
 		return
 	}
-	log.Printf("published %d records to %s", messageCount, queueName)
+	slog.Info("published records", "count", messageCount, "queue", queueName)
 	if err := publisher.Close(); err != nil {
-		log.Printf("publisher close: %v", err)
+		slog.Warn("publisher close failed", "error", err)
 	}
 	_ = publisher.AwaitManager(false, 5*time.Second)
 
@@ -267,7 +346,7 @@ func main() {
 		_ = consumer.AwaitManager(false, 5*time.Second)
 	}()
 	if !consumer.AwaitStatus(true, 30*time.Second) {
-		log.Print("consumer not ready")
+		slog.Error("consumer not ready")
 		cancel()
 		return
 	}
@@ -276,8 +355,11 @@ func main() {
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigs)
 
-	log.Printf("consuming %d records with %d workers, each sleeping %s",
-		messageCount, workers, recordDelay)
+	slog.Info("consuming records",
+		"count", messageCount,
+		"workers", workers,
+		"delay", recordDelay,
+	)
 
 	exit := "all records terminal"
 	select {
@@ -291,12 +373,20 @@ func main() {
 	}
 
 	summary := stats.snapshot()
-	log.Printf("SUMMARY exit=%q attempts=%d acks=%d requeues=%d drops=%d terminal=%d/%d peak-overlap=%d",
-		exit, summary.attempts, summary.acks, summary.requeues, summary.drops,
-		summary.terminalOutcomes, messageCount, summary.peak,
-	)
-	if summary.terminalOutcomes != messageCount {
-		log.Printf("INCOMPLETE: %d of %d records reached a terminal outcome", summary.terminalOutcomes, messageCount)
+	summaryAttrs := []any{
+		"exit", exit,
+		"attempts", summary.attempts,
+		"acks", summary.acks,
+		"requeues", summary.requeues,
+		"drops", summary.drops,
+		"terminal", summary.terminalOutcomes,
+		"total", messageCount,
+		"peak_overlap", summary.peak,
 	}
-	log.Println("EXIT")
+	if summary.terminalOutcomes == messageCount {
+		slog.Info("demo complete", summaryAttrs...)
+	} else {
+		slog.Error("demo incomplete", summaryAttrs...)
+	}
+	slog.Info("exit")
 }

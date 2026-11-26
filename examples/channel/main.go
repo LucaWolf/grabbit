@@ -78,7 +78,8 @@ func main() {
 		// WithChannelOptionDelay(...)      // see DelayProvider
 		// WithChannelOptionNotifyPublish() // see CallbackNotifyPublish, publishers
 		// WithChannelOptionNotifyReturn()  // see CallbackNotifyReturn, publishers
-		// WithChannelOptionProcessor()     // see CallbackProcessMessages, consumers
+		// WithChannelOptionProcessor()     // see CallbackProcessMessages, sequential batch consumers
+		// WithChannelOptionProcessRecord() // see CallbackProcessRecord, concurrent record consumers
 		// WithChannelOptionTopology()      // see TopologyOptions, publishers & consumers
 		// WithChannelOptionUsageParams()   // see ChanUsageParameters, publishers and consumers
 	)
@@ -131,6 +132,6 @@ func main() {
 		close(done)
 	}()
 
-	fmt.Println("awaiting signal")
+	fmt.Println("done: channel is up and queue is declared; awaiting SIGINT/SIGTERM to shut down")
 	<-done
 }

@@ -11,6 +11,14 @@
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
+coverage.html
+
+# Example binaries built by `make examples`
+/bin/
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+
+# Local LavinMQ HA cluster state (make lavinmq-up)
+/examples/lavinmq-ha/lavin-data/
+/examples/lavinmq-ha/etcd-data/

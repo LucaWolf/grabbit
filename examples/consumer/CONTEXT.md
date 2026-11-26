@@ -1,14 +1,14 @@
 # `examples/consumer` — Component Package (Peanut)
 
 > EGM contract for `/home/luci/projects/go/grabbit/examples/consumer`.
-> **Classification:** Component Package (Peanut) — standalone leaf demo module; nothing imports it.
-> **Files:** `.gitignore`, `go.mod`, `go.sum`, `main.go` (the only source file). No `*_test.go` files exist.
+> **Classification:** Component Package (Peanut) — leaf `package main` demo within the root module; nothing imports it.
+> **Files:** `main.go` (the only source file). No `*_test.go` files exist.
 > **Generated:** 2026-11-22 by the EGM bootstrap worker. Parent blueprint: [`../CONTEXT.md`](../CONTEXT.md).
 
 ## Overview
 
-A self-contained demo module (module path `consumer`, `go 1.21`) — **not** part of the main
-`github.com/LucaWolf/grabbit` module. Its single `package main` program demonstrates the consumer
+A self-contained `package main` demo (import path
+`github.com/LucaWolf/grabbit/examples/consumer`), part of the root module. Its single `package main` program demonstrates the consumer
 side of grabbit, a managed, auto-reconnecting RabbitMQ client (AMQP is the wire protocol RabbitMQ
 speaks). Step by step, `main.go`:
 
@@ -60,11 +60,9 @@ Nothing here is importable — the module's only entrypoint is `main`:
 | `PublishMsg` | `func(publisher *grabbit.Publisher, start, end int)` | Publishes `end-start` messages. |
 | `MsgHandler` | `func(rnd *rand.Rand, mu *sync.Mutex) grabbit.CallbackProcessMessages` | Builds the per-consumer message processor (`func(props *grabbit.DeliveriesProperties, messages []grabbit.DeliveryData, mustAck bool, ch *grabbit.Channel)`). |
 
-**Module wiring** (`go.mod`): module path `consumer`, `go 1.21`; requires
-`github.com/LucaWolf/grabbit v0.0.0-20221102051845-2eb228c3ab34` and
-`github.com/rabbitmq/amqp091-go v1.9.0`;
-`replace github.com/LucaWolf/grabbit => ../../../grabbit` pins the demo to the **local repo
-checkout**, never the published pseudo-version. `.gitignore` ignores the compiled binary `consumer`.
+**Module wiring:** part of the root module `github.com/LucaWolf/grabbit`; import path
+`github.com/LucaWolf/grabbit/examples/consumer`. No separate `go.mod`, `go.sum`, or per-example
+`.gitignore`; dependencies come from the root module.
 
 **grabbit API exercised** (identifiers verified against the library source):
 
@@ -131,32 +129,23 @@ checkout**, never the published pseudo-version. `.gitignore` ignores the compile
     `  [chan.consumer.one][consumer.one] got message: test number 0007 -- [ACK]` or
     `-- [NAK - expect this again later on]`
   - `publishing failed with: ` … / `notification: ` … / `publisher not ready yet` /
-    `awaiting signal` / the received signal name / `EXIT`
+    `demo running: 35 messages published with two competing consumers; awaiting SIGINT/SIGTERM
+    to stop` / the received signal name / `EXIT`
 
 ## Verification
 
-This module contains **no test files** (`*_test.go` count: 0), so the check is compile-only:
+This package contains **no test files** (`*_test.go` count: 0), so the check is compile-only:
 
 ```sh
-cd /home/luci/projects/go/grabbit/examples/consumer
-go test ./...   # compiles the demo package; runs no tests
+go build ./examples/consumer
+go test ./examples/consumer   # compiles the demo package; runs no tests
 ```
-
-**Build prerequisite (verified statically against the current tree):** this module's pins predate
-the current library checkout. Its `go.mod` requires `amqp091-go v1.9.0` while the replaced root
-module now requires `v1.10.0` (module resolution selects the higher version), and its `go.sum` has
-no entry for `go-notifying-latch v1.1.0`, which the library's non-test code now imports
-(`connection.go`, `channel.go`, `utils.go`). Under Go's default read-only module mode,
-`go test ./...` / `go build ./...` may therefore fail with *missing `go.sum` entry* errors until
-`go mod tidy` (or `go mod download`) is run in this directory. The replaced module's `go 1.25.7`
-directive also means a Go toolchain ≥ 1.25.7 is required, even though this module declares
-`go 1.21`.
 
 **Actually running the demo requires a live RabbitMQ broker** reachable at
 `amqp://guest:guest@localhost` (default `guest`/`guest` account):
 
 ```sh
-go run .
+go run ./examples/consumer
 ```
 
 Expected behavior: ~35 messages cycling between `consumer.one` and `consumer.two` (roughly half

@@ -30,7 +30,7 @@ outcome (Ack, Nack-requeue, Nack-drop); the library executes the outcome as an
 individual, non-bulk wire call from a single library-owned place. Batch
 consumers and record-concurrent consumers coexist on one connection as
 separate channels. The design is fully settled at the decision level in
-[concepts_brief.md](./concepts_brief.md) (2026-11-23 edition, DR1–DR6); this
+[concepts_brief.md](../notes/concepts_brief.md) (2026-11-23 edition, DR1–DR6); this
 document turns it into an implementable plan.
 
 ## The Problem
@@ -493,16 +493,16 @@ without restaging it.
 
 ## Additional Resources
 
-*   `./concepts_brief.md` — the 2026-11-23 ideation brief (DR1–DR6,
+*   `../notes/concepts_brief.md` — the 2026-11-23 ideation brief (DR1–DR6,
     alternatives, staged order).
-*   `./concepts_brief_remediation_audit.md` — the remediation plan the gate
+*   `../notes/concepts_brief_remediation_audit.md` — the remediation plan the gate
     block comes from.
-*   `./docs/adr/0003-recovery-redeclares-all-declared-topology.md` — the
+*   `../adr/0003-recovery-redeclares-all-declared-topology.md` — the
     recovery/re-declaration contract (S4 gate).
-*   `./docs/adr/0004-*.md` — the redelivery/process-and-leave-unacked
+*   `../adr/0004-*.md` — the redelivery/process-and-leave-unacked
     contract the settle-time re-check follows.
-*   `./docs/adr/0005-*.md` — the trace carve-out for ack/nack/reject.
-*   `./CONTEXT.md`, `./GLOSSARY.md`, `./AGENTS.md` — the project's
+*   `../adr/0005-*.md` — the trace carve-out for ack/nack/reject.
+*   `../../CONTEXT.md`, `../../GLOSSARY.md`, `../../AGENTS.md` — the project's
     agent-facing contracts and controlled vocabulary.
 
 ## Future Improvements
@@ -670,7 +670,7 @@ job are green (per the approved Technical Plan and the brief's staged order).
 *   **Why**: The bound claim and the shutdown claim are unverifiable without
     them; the existing join helper self-leaks on timeout by its own comment.
 
-#### 11. `./CONTEXT.md` (Modify)
+#### 11. `../../CONTEXT.md` (Modify)
 
 *   **Type / Scope**: Project documentation.
 *   **Changes**: Options list; delivery-batching interface (gains the record
@@ -682,7 +682,7 @@ job are green (per the approved Technical Plan and the brief's staged order).
 *   **Why**: CONTEXT.md is the project's agent-facing contract; every option
     and behavior it describes must match the code.
 
-#### 12. `./GLOSSARY.md` (Modify)
+#### 12. `../../GLOSSARY.md` (Modify)
 
 *   **Type / Scope**: Controlled vocabulary.
 *   **Changes**: Split "Processor" into batch and record shapes; add a
@@ -701,7 +701,7 @@ job are green (per the approved Technical Plan and the brief's staged order).
 *   **Why**: The current non-goal reads as if the library never runs user
     code concurrently; that becomes false on the concurrent path.
 
-#### 14. `./AGENTS.md` (Modify)
+#### 14. `../../AGENTS.md` (Modify)
 
 *   **Type / Scope**: Agent instructions.
 *   **Changes**: Add `WithProcessorConcurrency` and
@@ -712,7 +712,7 @@ job are green (per the approved Technical Plan and the brief's staged order).
 *   **Why**: Future agent sessions must not tune concurrency against a
     secret size-1 batch or expect flush events that never fire.
 
-#### 15. `./docs/adr/0008-per-channel-dispatch-model-sequential-by-default-and-concurrent-by-option.md` (Create)
+#### 15. `../adr/0008-per-channel-dispatch-model-sequential-by-default-and-concurrent-by-option.md` (Create)
 
 *   **Type / Scope**: Architecture decision record.
 *   **Changes**: Record the two models and the selector; the record surface
@@ -725,14 +725,14 @@ job are green (per the approved Technical Plan and the brief's staged order).
 *   **Why**: The behavior default and its consequences need a durable
     decision record; the repo's ADR set is one decision per file.
 
-#### 16. `./docs/adr/0006-*.md` (Create — gate stage)
+#### 16. `../adr/0006-*.md` (Create — gate stage)
 
 *   **Type / Scope**: Architecture decision record for the observation-B
     guard.
 *   **Why**: The guard changes connection lifecycle behavior; ADR-0006 is
     the number the remediation plan reserved.
 
-#### 17. `./examples/consumer_batch/CONTEXT.md` (Modify)
+#### 17. `../../examples/consumer_batch/CONTEXT.md` (Modify)
 
 *   **Type / Scope**: Example documentation fix.
 *   **Changes**: Correct the guard's mislabel — it is a recovery flush guard,
@@ -740,7 +740,7 @@ job are green (per the approved Technical Plan and the brief's staged order).
 *   **Why**: The mislabel teaches the wrong contract to anyone porting the
     example.
 
-#### 18. `./examples/CONTEXT.md` (Modify)
+#### 18. `../../examples/CONTEXT.md` (Modify)
 
 *   **Type / Scope**: Example index.
 *   **Changes**: Add the new tenth module row (name, what it shows, run
@@ -748,7 +748,7 @@ job are green (per the approved Technical Plan and the brief's staged order).
 *   **Why**: The examples index is the discovery surface for runnable
     demonstrations.
 
-#### 19. `./examples/per_record/` (Create — module)
+#### 19. `../../examples/per_record/` (Create — module)
 
 *   **Type / Scope**: New example module (`go.mod`, `go.sum`, `main.go`,
     `CONTEXT.md`).

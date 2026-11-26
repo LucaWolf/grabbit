@@ -175,7 +175,7 @@ func main() {
 	)
 
 	// block main thread - wait for shutdown signal
-	log.Println("awaiting signal")
+	log.Println("done: 30 messages published and consumers started; awaiting SIGINT/SIGTERM to shut down")
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	<-sigs

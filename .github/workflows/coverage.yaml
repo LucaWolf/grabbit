@@ -1,20 +1,22 @@
 name: Test and Coverage
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 jobs:
   test_coverage:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: oldstable
+          go-version-file: go.mod
           cache: true
       - name: Test
-        run: go test -tags test_env -coverprofile coverage.out -v
+        run: go test -tags test_env -coverprofile coverage.out -v ./...
       - name: Coverage report
         uses: ncruces/go-coverage-report@v0
         with:

@@ -9,37 +9,6 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-func AwaitDown(ch *grabbit.Channel, timeout, pollFreq time.Duration) bool {
-	if timeout == 0 {
-		timeout = 7500 * time.Millisecond
-	}
-	if pollFreq == 0 {
-		pollFreq = 330 * time.Millisecond
-	}
-
-	// status polling
-	ticker := time.NewTicker(pollFreq)
-	defer ticker.Stop()
-	done := make(chan struct{})
-
-	// session timeout
-	go func() {
-		time.Sleep(timeout)
-		close(done)
-	}()
-
-	for {
-		select {
-		case <-done:
-			return false
-		case <-ticker.C:
-			if ch.IsClosed() {
-				return true
-			}
-		}
-	}
-}
-
 func main() {
 	conn := grabbit.NewConnection(
 		"amqp://guest:guest@localhost", amqp.Config{},
@@ -66,8 +35,8 @@ func main() {
 	chSignalBetaUp := make(chan struct{})
 	chSignalAlphaUp := make(chan struct{})
 
-	// WARN: sudden death via ctx cancellation will not provide any EventClosed feedback
-	// this is useless in our test case, hence the supplementary AwaitDown()
+	// WARN: sudden death via ctx cancellation will not provide any EventClosed feedback;
+	// the closed state is observed with Channel.AwaitStatus(false, ...) below.
 	go func() {
 		for event := range betaStatusChan {
 			log.Print("beta.notification: ", event)
@@ -93,7 +62,7 @@ func main() {
 	<-time.After(1 * time.Second)
 	alphaCh.Close()
 
-	if AwaitDown(betaCh, 7*time.Second, 250*time.Millisecond) {
+	if betaCh.AwaitStatus(false, 7*time.Second) {
 		log.Fatal("Error: closing alphaCh should not have affected betaCh")
 	}
 
@@ -105,7 +74,7 @@ func main() {
 
 	// instead closing the parent context ctxAlpha should induce beta to shut-down
 	ctxAlphaCancel()
-	if !AwaitDown(betaCh, 7*time.Second, 250*time.Millisecond) {
+	if !betaCh.AwaitStatus(false, 7*time.Second) {
 		log.Fatal("Error: cancelling ctxAlpha should have closed betaCh")
 	}
 

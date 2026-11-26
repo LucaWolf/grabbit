@@ -14,20 +14,10 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-type ConfirmationOutcome int
-
-//go:generate stringer -type=ConfirmationOutcome  -linecomment
-const (
-	ConfirmationTimeOut ConfirmationOutcome = iota // no timely response
-	ConfirmationClosed                             // data channel is closed
-	ConfirmationACK                                // publish confirmed by server
-	ConfirmationNAK                                // publish negative acknowledgement
-)
-
 type ConfirmationData struct {
-	Outcome     ConfirmationOutcome // acknowledgment received stats
-	ReqSequence uint64              // DeliveryTag of our request
-	RspSequence uint64              // DeliveryTag of the notification
+	Outcome     grabbit.ConfirmationOutcome // acknowledgment outcome
+	ReqSequence uint64                      // DeliveryTag of our request
+	RspSequence uint64                      // DeliveryTag of the notification
 }
 
 // CallbackWhenDown
@@ -74,20 +64,20 @@ func AwaitPublishConfirmation(seqNo uint64, confCh chan amqp.Confirmation, tmr t
 
 	select {
 	case <-time.After(tmr):
-		result.Outcome = ConfirmationTimeOut
+		result.Outcome = grabbit.ConfirmationTimeOut
 		return result
 	case confirmation, ok := <-confCh:
 		if !ok {
-			result.Outcome = ConfirmationClosed
+			result.Outcome = grabbit.ConfirmationClosed
 			return result
 		}
 		// can we get out of sync reports: delays, re-posts, etc?
 		result.RspSequence = confirmation.DeliveryTag
 		// do something useful here
 		if confirmation.Ack {
-			result.Outcome = ConfirmationACK
+			result.Outcome = grabbit.ConfirmationACK
 		} else {
-			result.Outcome = ConfirmationNAK
+			result.Outcome = grabbit.ConfirmationNAK
 		}
 	}
 	return result
@@ -209,6 +199,6 @@ func main() {
 		close(done)
 	}()
 
-	log.Println("awaiting signal")
+	log.Println("done: 5 messages published and confirmed; awaiting SIGINT/SIGTERM to shut down")
 	<-done
 }

@@ -34,7 +34,8 @@ feeds prefetch-batched deliveries to `CallbackProcessMessages`, while a positive
 `CallbackProcessRecord`; both default to manual acknowledgments. The root package's direct source files
 implement all of this; `internal/traceutils` provides a build-tag-gated tracing harness
 the test suite uses to assert exact AMQP call parameters without a broker, and
-`examples/` holds ten standalone demo modules.
+`examples/` holds ten demo `package main` programs inside the root module, plus the
+Podman-based LavinMQ HA cluster under `examples/lavinmq-ha/`.
 
 ## Local Interface & Invariants
 
@@ -298,13 +299,13 @@ declaration.)
 
 ## Subdirectories & System Boundaries
 
-- [examples](./examples/CONTEXT.md) — ten standalone demo modules (own `go.mod` each,
-  `replace`d to this working tree), outside the root module's package graph: connection
-  and channel lifecycle, context trees, baseline/routing/confirmed publishing, competing
-  and batch consuming, and per-record concurrency (`per_record`). Compile-only
-  verification per module;
-  running requires a live RabbitMQ (the demos use `localhost`, except `per_record`'s
-  `127.0.0.1`).
+- [examples](./examples/CONTEXT.md) — ten demo `package main` programs inside the root
+  module: connection and channel lifecycle, context trees, baseline/routing/confirmed
+  publishing, competing and batch consuming, and per-record concurrency (`per_record`).
+  Compile-only verification (`go build ./examples/...`); running requires a live RabbitMQ
+  (the demos use `localhost`, except `per_record`'s `127.0.0.1`). `examples/lavinmq-ha/`
+  holds the Podman-managed three-node LavinMQ cluster, etcd, and HAProxy front end started
+  with `make lavinmq-up` on `localhost:5672`; it is infrastructure, not a Go package.
 - [internal](./internal/CONTEXT.md) — non-public support code; currently one child:
   [internal/traceutils](./internal/traceutils/CONTEXT.md), the build-tag-gated AMQP
   call-tracing harness used by the root package and its tests.
@@ -344,14 +345,17 @@ declaration.)
 
 ## System Verification
 
-- **Root package (CI command, verbatim from `.github/workflows/coverage.yaml`):**
-  `go test -tags test_env -coverprofile coverage.out -v` — note the workflow passes
-  **no package pattern**, so CI runs only the current-directory root package's tests.
-- **All packages (local):** `go test -tags test_env ./...`.
-- **Race detector:** `go test -race -tags test_env ./...`.
+- **All packages (CI and Makefile):** `go test -tags test_env -coverprofile coverage.out -v ./...`
+  (CI runs this from `.github/workflows/coverage.yaml`; the root package, `internal/`, and
+  every example package are covered by the pattern, though examples have no test files).
+- **Race detector:** `make test-race` or `go test -race -tags test_env ./...`.
 - **Tracing harness subtree (local):** `go test -tags test_env ./internal/traceutils/...`
-  — `internal/traceutils` has no test files of its own; CI does not target it.
+  — `internal/traceutils` has no test files of its own.
 - **Static analysis:** a second CI workflow, `.github/workflows/codeql.yml`, runs
   CodeQL Go analysis on push/pull-request to `main` and on a weekly schedule.
-- **Examples:** compile-only, per module — see [examples/CONTEXT.md](./examples/CONTEXT.md)
-  for the per-directory commands and the shared `go mod tidy` prerequisite.
+- **Examples:** compile-only, from the repository root:
+  `go build ./examples/...`; `make examples` writes every demo binary into `bin/`.
+  See [examples/CONTEXT.md](./examples/CONTEXT.md) for per-directory run commands.
+- **Task runner:** the root `Makefile` exposes `build`, `test`, `test-race`, `cover`, `vet`,
+  `fmt`, `tidy`, `examples`, `lavinmq-up`, `lavinmq-down`, `lavinmq-reset`, `run`, `check`,
+  and `clean` (`make help` lists them).

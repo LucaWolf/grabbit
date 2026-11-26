@@ -1,21 +1,20 @@
 # publisher_routing
 
-**Classification:** Component Package (Peanut) — standalone `package main` demo module.
+**Classification:** Component Package (Peanut) — `package main` demo within the root module.
 **Parent blueprint:** [../CONTEXT.md](../CONTEXT.md) (examples)
 
 ## Overview
 
-`publisher_routing` is a self-contained Go module (module path `publisher_routing`, Go 1.21) demonstrating **AMQP topology declaration and routing-key dispatch** with the grabbit library. It declares two ephemeral exchanges (one `direct`, one `topic`) and two queues, binds each queue to both exchanges, publishes 30 messages through three distinct routing paths (direct exchange, topic exchange, default exchange), and finally attaches a consumer to each queue to prove the messages landed where expected.
+`publisher_routing` is a self-contained `package main` demo (import path
+`github.com/LucaWolf/grabbit/examples/publisher_routing`) demonstrating **AMQP topology declaration and routing-key dispatch** with the grabbit library. It declares two ephemeral exchanges (one `direct`, one `topic`) and two queues, binds each queue to both exchanges, publishes 30 messages through three distinct routing paths (direct exchange, topic exchange, default exchange), and finally attaches a consumer to each queue to prove the messages landed where expected.
 
-It is one of four sibling publisher demo modules under `examples/` (alongside `pub_deferred`, `publisher`, and `publisher_await_delivery`), each an independent Go module with its own `go.mod`/`go.sum`. All four map the dependency `github.com/LucaWolf/grabbit` to the repository root via `replace github.com/LucaWolf/grabbit => ../../../grabbit`, so the demos always compile against the working tree.
+It is one of four sibling publisher demo packages under `examples/` (alongside `pub_deferred`, `publisher`, and `publisher_await_delivery`), all part of the root module and sharing its dependency versions.
 
 File inventory:
 
 | File | Role |
 | --- | --- |
 | `main.go` | The entire demo program: routing constants, topology construction, batch publisher, consumer processor, `main()`. |
-| `go.mod` / `go.sum` | Module definition; requires `github.com/LucaWolf/grabbit` (replaced to working tree) and `github.com/rabbitmq/amqp091-go v1.9.0`. |
-| `.gitignore` | Ignores the compiled binary `publisher_routing`. |
 
 There are no test files and no README in this directory.
 
@@ -23,8 +22,9 @@ There are no test files and no README in this directory.
 
 ### Module identity
 
-- Module path: `publisher_routing`; `go 1.21`.
-- Requires: `github.com/LucaWolf/grabbit v0.0.0-20221102051845-2eb228c3ab34` (with `replace github.com/LucaWolf/grabbit => ../../../grabbit`) and `github.com/rabbitmq/amqp091-go v1.9.0`.
+- Import path: `github.com/LucaWolf/grabbit/examples/publisher_routing`; part of the root module (Go 1.25.7).
+- Dependencies: inherited from the root `go.mod` (`amqp091-go` v1.10.0,
+  `go-notifying-latch` v1.1.0); no separate module wiring.
 - Entrypoint: executable binary. No command-line flags, arguments, or environment variables; all configuration is hard-coded (broker URL, names, keys, timings).
 
 ### Routing constants (declared in `main`)
@@ -101,16 +101,17 @@ There are no test files and no README in this directory.
 
 ## Verification
 
-From this directory (`examples/publisher_routing`):
+From the repository root:
 
 ```sh
 # Compile-only check — there are no test files, so this verifies the
-# module builds against the replaced grabbit working tree:
-go test ./...
+# package builds as part of the root module:
+go build ./examples/publisher_routing
+go test ./examples/publisher_routing
 
 # Actually running the demo requires a live RabbitMQ broker
 # at amqp://guest:guest@localhost:
-go run .
+go run ./examples/publisher_routing
 ```
 
 Expected runtime behavior with a broker: 30 messages routed in three ways (15 per queue), then both consumers drain and ack their queues while logging each delivery; the process idles until SIGINT/SIGTERM. Without a broker: `AwaitStatus` fails after 10 s, the context is cancelled, and the program exits.

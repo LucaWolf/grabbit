@@ -1,13 +1,14 @@
 # publisher
 
-**Classification:** Component Package (Peanut) — standalone `package main` demo module.
+**Classification:** Component Package (Peanut) — `package main` demo within the root module.
 **Parent blueprint:** [../CONTEXT.md](../CONTEXT.md) (examples)
 
 ## Overview
 
-`publisher` is a self-contained Go module (module path `publisher`, Go 1.21) providing the **baseline fire-and-forget publisher demo** of the grabbit library. It establishes a managed connection with the full set of lifecycle callbacks (down/up/recovering), declares the durable queue `workload`, waits for channel readiness, publishes five messages at a steady one-per-second pace, then closes the publisher and deliberately attempts five more publishes to demonstrate failure behavior on a closed channel.
+`publisher` is a self-contained `package main` demo (import path
+`github.com/LucaWolf/grabbit/examples/publisher`) providing the **baseline fire-and-forget publisher demo** of the grabbit library. It establishes a managed connection with the full set of lifecycle callbacks (down/up/recovering), declares the durable queue `workload`, waits for channel readiness, publishes five messages at a steady one-per-second pace, then closes the publisher and deliberately attempts five more publishes to demonstrate failure behavior on a closed channel.
 
-It is one of four sibling publisher demo modules under `examples/` (alongside `pub_deferred`, `publisher_await_delivery`, and `publisher_routing`), each an independent Go module with its own `go.mod`/`go.sum`. All four map the dependency `github.com/LucaWolf/grabbit` to the repository root via `replace github.com/LucaWolf/grabbit => ../../../grabbit`, so the demos always compile against the working tree.
+It is one of four sibling publisher demo packages under `examples/` (alongside `pub_deferred`, `publisher_await_delivery`, and `publisher_routing`), all part of the root module and sharing its dependency versions.
 
 Relative to its sibling `publisher_await_delivery` (which shares the same skeleton, names, and shutdown choreography), this variant does **not** capture publish sequence numbers or await confirmations: `WithChannelOptionNotifyPublish`/`WithChannelOptionNotifyReturn` are wired purely for logging, making this the simplest end-to-end publishing example.
 
@@ -16,8 +17,6 @@ File inventory:
 | File | Role |
 | --- | --- |
 | `main.go` | The entire demo program: lifecycle callbacks, publish loop, `main()`. |
-| `go.mod` / `go.sum` | Module definition; requires `github.com/LucaWolf/grabbit` (replaced to working tree) and `github.com/rabbitmq/amqp091-go v1.9.0`. |
-| `.gitignore` | Ignores the compiled binary `publisher`. |
 
 There are no test files and no README in this directory.
 
@@ -25,8 +24,9 @@ There are no test files and no README in this directory.
 
 ### Module identity
 
-- Module path: `publisher`; `go 1.21`.
-- Requires: `github.com/LucaWolf/grabbit v0.0.0-20221102051845-2eb228c3ab34` (with `replace github.com/LucaWolf/grabbit => ../../../grabbit`) and `github.com/rabbitmq/amqp091-go v1.9.0`.
+- Import path: `github.com/LucaWolf/grabbit/examples/publisher`; part of the root module (Go 1.25.7).
+- Dependencies: inherited from the root `go.mod` (`amqp091-go` v1.10.0,
+  `go-notifying-latch` v1.1.0); no separate module wiring.
 - Entrypoint: executable binary. No command-line flags, arguments, or environment variables; all configuration is hard-coded (broker URL, names, timings).
 
 ### Declared identifiers (package main)
@@ -78,16 +78,17 @@ There are no test files and no README in this directory.
 
 ## Verification
 
-From this directory (`examples/publisher`):
+From the repository root:
 
 ```sh
 # Compile-only check — there are no test files, so this verifies the
-# module builds against the replaced grabbit working tree:
-go test ./...
+# package builds as part of the root module:
+go build ./examples/publisher
+go test ./examples/publisher
 
 # Actually running the demo requires a live RabbitMQ broker
 # at amqp://guest:guest@localhost:
-go run .
+go run ./examples/publisher
 ```
 
 Expected runtime behavior with a broker: five steady-paced publishes with confirmation callbacks firing, then five logged publish failures after close; the process idles until SIGINT/SIGTERM. Without a broker: `AwaitStatus` fails after 30 s, the context is cancelled, and the program exits.

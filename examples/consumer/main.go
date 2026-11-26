@@ -59,6 +59,8 @@ func PublishMsg(publisher *grabbit.Publisher, start, end int) {
 	}
 }
 
+// MsgHandler exercises the sequential batch model (the consumer default).
+// For per-record concurrent dispatch see examples/per_record and WithChannelOptionProcessRecord.
 func MsgHandler(rnd *rand.Rand, mu *sync.Mutex) grabbit.CallbackProcessMessages {
 	return func(props *grabbit.DeliveriesProperties, messages []grabbit.DeliveryData, mustAck bool, ch *grabbit.Channel) {
 		for _, msg := range messages {
@@ -189,7 +191,7 @@ func main() {
 		close(done)
 	}()
 
-	log.Println("awaiting signal")
+	log.Println("demo running: 35 messages published with two competing consumers; awaiting SIGINT/SIGTERM to stop")
 	// if we restart the Rabbit engine we should get
 	// all the topology recreated when conn/channels recovery has completed
 	<-done

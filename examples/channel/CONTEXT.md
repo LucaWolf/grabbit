@@ -1,7 +1,7 @@
 # `examples/channel` — Component Package Contract
 
-> **Classification:** Component Package (Peanut) — leaf, standalone executable demo module.
-> No subdirectories, no test files, no exported API: this module is reference material for
+> **Classification:** Component Package (Peanut) — leaf `package main` demo within the root module.
+> No subdirectories, no test files, no exported API: this package is reference material for
 > humans showing how to drive a managed grabbit `Channel`; it is not imported by any other package.
 
 ## Overview
@@ -13,15 +13,12 @@ up/down/recovering lifecycle callbacks, (re-)declares a demo queue from inside t
 event handler every time the channel comes up, and shuts everything down gracefully on
 SIGINT/SIGTERM.
 
-Module facts (from `go.mod` / `go.sum` / `.gitignore`):
+Module facts:
 
-- Own Go module: `module channel`, `go 1.21` — this directory is **not** part of the root
-  module's package graph; the root module's `go test ./...` does not compile it.
-- Requires `github.com/LucaWolf/grabbit v0.0.0-20221102051845-2eb228c3ab34` with
-  `replace github.com/LucaWolf/grabbit => ../../../grabbit` — the demo compiles against the
-  **local working-tree copy** of the library, not the published version.
-- Requires `github.com/rabbitmq/amqp091-go v1.9.0`.
-- `.gitignore` contains `channel` (the compiled binary produced by `go build` in this directory).
+- Part of the root module `github.com/LucaWolf/grabbit`; import path
+  `github.com/LucaWolf/grabbit/examples/channel`.
+- No separate `go.mod`, `go.sum`, or per-example `.gitignore`; dependencies come from the
+  root module (Go 1.25.7, `amqp091-go` v1.10.0, `go-notifying-latch` v1.1.0).
 
 ## Interface
 
@@ -117,24 +114,18 @@ configuration is hardcoded:
   plus grabbit-internal connection reconnect and channel reconnect/manage goroutines. The two
   drain loops run until process exit (the event channels are never closed).
 - Signal handling: `SIGINT` / `SIGTERM` terminate the program.
-- Output: stdout prints `awaiting signal`, the received signal, and
-  `app closing connection and dependencies`; the `log` package (stderr) emits channel
+- Output: stdout prints `done: channel is up and queue is declared; awaiting SIGINT/SIGTERM to
+  shut down`, the received signal, and `app closing connection and dependencies`; the `log` package (stderr) emits channel
   callbacks, `cmd.notification:` events, and the queue pending count.
 - Writes no files; no HTTP or other I/O.
 
 ## Verification
 
-- **Compile-only check:** `go test ./...` — there are no test files in this module, so the
-  command only verifies that the package compiles (`ok channel [no test files]`). Run it
-  **inside this directory**; being a standalone module, it is not covered by the root module's
-  `go test ./...`.
-- `go build ./...` compiles the `channel` binary (ignored via `.gitignore`).
-- **Running the demo:** `go run .` requires a live RabbitMQ broker at
+- **Compile-only check:** from the repository root run `go build ./examples/channel` and
+  `go test ./examples/channel`; there are no test files, so the test command only verifies
+  compilation.
+- `make examples` builds every demo into `bin/`.
+- **Running the demo:** `go run ./examples/channel` requires a live RabbitMQ broker at
   `amqp://guest:guest@localhost` with guest/guest credentials. Start it, watch the queue
   declaration on channel-up, interrupt with Ctrl-C to trigger the deferred shutdown path.
-- **Dependency caveat:** the `replace` directive resolves grabbit to the local working tree,
-  whose `go.mod` currently requires `amqp091-go v1.10.0` and `go-notifying-latch v1.1.0`,
-  while this module's `go.sum` pins `amqp091-go v1.9.0` and lacks `go-notifying-latch`
-  entirely. If the compile check reports missing `go.sum` entries, run `go mod tidy` here first.
-  The replaced root module's `go 1.25.7` directive also means a Go toolchain ≥ 1.25.7 (or
-  GOTOOLCHAIN auto-switching) is required, even though this module declares `go 1.21`.
+- **Dependencies:** inherited from the root `go.mod`; no per-example `go mod tidy` is needed.

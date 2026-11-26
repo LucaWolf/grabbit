@@ -1,7 +1,7 @@
 # `examples/per_record` — Component Package Contract
 
-> **Classification:** Component Package (Peanut) — leaf, standalone executable demo module.
-> No subdirectories, no test files, no exported API: this module is reference material for
+> **Classification:** Component Package (Peanut) — leaf `package main` demo within the root module.
+> No subdirectories, no test files, no exported API: this package is reference material for
 > humans showing per-record concurrent consumption with grabbit's record processor; it is
 > not imported by any other package.
 
@@ -15,21 +15,16 @@ counter shows the bounded worker overlap. The callback branches on the message i
 exercise all three `RecordOutcome` values: ack, nack-requeue, and nack-drop. A requeued
 record is dropped on its redelivery, and a poison record is dropped immediately; no record
 loops. The program self-terminates once all 24 messages reach a terminal outcome and prints
-a summary with attempt/outcome counts and peak overlap.
+JSON `log/slog` output with attempt/outcome counts and peak overlap. This is the repository's
+reference demo for bridging grabbit events and processor logs into `slog`, including a
+custom TRACE level below DEBUG.
 
-Module facts (from `go.mod` / `go.sum` / `.gitignore`):
+Module facts:
 
-- Own Go module: `module per_record`, `go 1.25.7` — this directory is **not** part of the
-  root module's package graph; the root module's `go test ./...` does not compile it.
-- Requires `github.com/LucaWolf/grabbit v0.0.0-20221102051845-2eb228c3ab34` with
-  `replace github.com/LucaWolf/grabbit => ../../../grabbit` — the demo compiles against the
-  **local working-tree copy** of the library, not the published version.
-- Requires `github.com/rabbitmq/amqp091-go v1.10.0`; `go.sum` also carries
-  `go-notifying-latch v1.1.0`, `rabbit-hole/v3 v3.2.0`, and `go.uber.org/goleak v1.3.0`
-  from the replaced module graph. The `go 1.25.7` directive comes from the local grabbit
-  module and is why this demo needs Go ≥ 1.25.7.
-- `.gitignore` contains `per_record` (the compiled binary produced by `go build` in this
-  directory).
+- Part of the root module `github.com/LucaWolf/grabbit`; import path
+  `github.com/LucaWolf/grabbit/examples/per_record`.
+- No separate `go.mod`, `go.sum`, or per-example `.gitignore`; dependencies come from the
+  root module (Go 1.25.7, `amqp091-go` v1.10.0, `go-notifying-latch` v1.1.0).
 
 ## Interface
 
@@ -40,7 +35,7 @@ configuration is hardcoded:
 | --- | --- |
 | Broker address | `amqp://guest:guest@127.0.0.1:5672/` (guest/guest, default vhost `/`), `amqp.Config{}` |
 | Connection name | `conn.per_record`, bound to cancelable `ctx` (`context.WithCancel`) |
-| Event channel | buffered `chan grabbit.Event`, capacity 32; a goroutine logs until `ctx` is cancelled |
+| Event channel | buffered `chan grabbit.Event`, capacity 32; a goroutine maps events to `slog` records until `ctx` is cancelled |
 | Publisher channel name | `chan.per_record.publisher` |
 | Queue | `workload.per_record` — declared via `TopologyOptions{Name: ..., IsDestination: true, Durable: true, Declare: true}` |
 | Publish routing | default exchange (`""`), routing key `workload.per_record` (via `WithKey`), confirmation count 24 |
@@ -71,8 +66,10 @@ configuration is hardcoded:
 
 **Program flow:**
 
-1. Builds the connection with `ctx` and the shared event channel; a goroutine logs every
-   event until cancellation.
+1. Builds the connection with `ctx` and the shared event channel; a goroutine maps every
+   `grabbit.Event` to a `slog` record with `source_type`, `source`, `kind`, optional
+   `target`, and optional `error` attributes. Happy-path events are DEBUG; recovering or
+   error-bearing events are WARN; setup failures are ERROR.
 2. Configures the publisher with the queue topology and a confirmation count of 24; gates on
    `AwaitStatus(true, 30s)`.
 3. Purges the queue, then publishes all 24 records with `PublishDeferredConfirm` and waits
@@ -85,12 +82,13 @@ configuration is hardcoded:
    - `1` → `RecordNackRequeue` on first delivery, `RecordNackDrop` when
      `Redelivered == true`;
    - `2` → `RecordNackDrop` (poison record).
-6. The callback logs the branch, redelivery flag, current in-flight count, and
-   terminal-outcome progress. On the 24th terminal outcome it signals `done`
-   (non-blocking, buffered).
+6. The callback emits one TRACE-level `slog` object per attempt with `consumer`, `record`,
+   `delivery_tag`, `reason`, `redelivered`, `in_flight`, `outcome`, `terminal`, and `total`
+   attributes. On the 24th terminal outcome it signals `done` (non-blocking, buffered).
 7. `main` waits for `done`, a signal, or the 60 s timeout; after `done` it waits 500 ms for
-   the last outcomes to reach the wire, prints the summary, and exits. Deferred cancels and
-   `Close`/`AwaitManager` calls let the connection and consumer loops terminate.
+   the last outcomes to reach the wire, logs `demo complete` (or `demo incomplete` at error
+   level), logs `exit`, and returns. Deferred cancels and `Close`/`AwaitManager` calls let
+   the connection and consumer loops terminate.
 
 ## Invariants
 
@@ -114,8 +112,8 @@ configuration is hardcoded:
   the callback's terminal-outcome counter, not by a drain event.
 - **Publisher confirms before consumption:** each publish is confirmed before the consumer
   starts, so the workload is complete and stable for the demonstration.
-- **No new event kinds:** the demo only logs the existing `grabbit.Event` values and its own
-  record/outcome lines.
+- **No new event kinds:** the demo only maps existing `grabbit.Event` values to `slog`
+  levels and attributes; grabbit itself performs no logging.
 
 ## Side Effects
 
@@ -126,9 +124,16 @@ configuration is hardcoded:
   `EXIT`.
 - **Broker state:** the durable queue `workload.per_record` is declared and purged at the
   start. The demo does not delete the queue on exit, so a rerun reuses it (after purging).
-- **Logs:** one line per callback invocation with the chosen outcome, redelivery flag,
-  in-flight count, and terminal-outcome progress, plus infrastructure events and a final
-  `SUMMARY` line.
+- **Logs:** one JSON object per line via `slog.NewJSONHandler` on stderr, with a custom
+  `levelTrace` (`slog.LevelDebug - 4`) rendered as `"TRACE"` by `ReplaceAttr`.
+  - TRACE: per-record application work (`record processed`, purge counts).
+  - DEBUG: happy-path `grabbit event` records (`Up`, `Closed`, successful topology).
+  - WARN: recovery/blocking/returned-message events, errors on Down/Closed, close failures.
+  - ERROR: setup failures (`Qos`, `Consume`, `Confirm`), incomplete runs, and fatal
+    readiness failures.
+  - INFO: main app markers (`demo starting`, `published records`, `consuming records`,
+    `demo complete`, `exit`).
+  No ANSI escape codes are used.
 - **Shutdown:** normal completion after all records reach a terminal outcome;
   `SIGINT`/`SIGTERM` exits early
   with a partial summary; the 60 s timeout guards a stalled broker. The process does not
@@ -137,24 +142,27 @@ configuration is hardcoded:
 
 ## Verification
 
-Compile-only, from this directory:
+Compile-only, from the repository root:
 
 ```sh
-go test ./...
+go build ./examples/per_record
+go test ./examples/per_record
 ```
 
 Run against a live broker at the hardcoded address:
 
 ```sh
-go run .
+go run ./examples/per_record
 ```
 
 Against the LavinMQ container used by the root test suite, the expected terminal summary is:
 
-```text
-SUMMARY exit="all records terminal" attempts=32 acks=8 requeues=8 drops=16 terminal=24/24 peak-overlap=8
+```json
+{"time":"2026-11-26T12:09:09.332Z","level":"INFO","msg":"demo complete","exit":"all records terminal","attempts":32,"acks":8,"requeues":8,"drops":16,"terminal":24,"total":24,"peak_overlap":8}
+{"time":"2026-11-26T12:09:09.332Z","level":"INFO","msg":"exit"}
 ```
 
-`attempts` is 24 first deliveries plus 8 requeues. The peak is up to 8 in one generation;
-the observed value under LavinMQ is 8. A failed or interrupted run prints `INCOMPLETE` with
-the terminal-outcome count.
+The timestamp is illustrative. `attempts` is 24 first deliveries plus 8 requeues.
+The peak is up to 8 in one generation; the observed value under LavinMQ is 8. A failed or
+interrupted run emits `{"level":"ERROR","msg":"demo incomplete",...}` with the same
+attributes.
