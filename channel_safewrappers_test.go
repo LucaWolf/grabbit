@@ -140,31 +140,6 @@ func TestChannel_Nack(t *testing.T) {
 	}
 }
 
-func TestChannel_QueueInspect(t *testing.T) {
-	conn := NewConnection(CONN_ADDR_RMQ_LOCAL, amqp.Config{}, WithConnectionOptionName("test-connection-queue-inspect"))
-	if conn == nil {
-		t.Fatalf("Failed to create connection")
-	}
-	defer AwaitConnectionManagerDone(conn)
-	defer conn.Close()
-
-	ch := NewChannel(conn)
-	defer ch.Close()
-	ch.AwaitStatus(true, DefaultPoll.Timeout)
-
-	queueName := "test-queue"
-
-	_, err := ch.QueueDeclare("test-queue", false, false, false, false, nil)
-	if err != nil {
-		t.Fatalf("QueueDeclare() failed: %v", err)
-	}
-
-	_, err = ch.QueueInspect(queueName)
-	if err != nil {
-		t.Errorf("QueueInspect() should not return an error: %v", err)
-	}
-}
-
 func TestChannel_QueueDeclarePassive(t *testing.T) {
 	conn := NewConnection(CONN_ADDR_RMQ_LOCAL, amqp.Config{}, WithConnectionOptionName("test-connection-queue-declare-passive"))
 	if conn == nil {

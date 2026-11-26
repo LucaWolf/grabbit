@@ -55,10 +55,6 @@ type ParamsExchangeBind struct {
 	Args        amqp.Table
 }
 
-type ParamsQueueInspect struct {
-	Name string
-}
-
 type ParamsPublishWithContext struct {
 	Exchange  string
 	Key       string

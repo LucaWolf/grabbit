@@ -71,7 +71,7 @@ acknowledgment — `Ack`, `Nack`, `Reject`; consuming — `Consume`, `ConsumeWit
 `PublishWithDeferredConfirm`, `PublishWithDeferredConfirmWithContext`,
 `GetNextPublishSeqNo`; topology — `QueueDeclare`, `QueueDeclarePassive`,
 `QueueDeclareWithTopology`, `QueueBind`, `QueueUnbind`, `QueuePurge`, `QueueDelete`,
-`QueueInspect` (deprecated), `ExchangeDeclare`, `ExchangeDeclareWithTopology`,
+`ExchangeDeclare`, `ExchangeDeclareWithTopology`,
 `ExchangeDelete`; transactions/flow — `Tx`, `TxCommit`, `TxRollback`, `Flow`, `Confirm`;
 notifier plumbing — `NotifyClose`, `NotifyCancel`, `NotifyFlow`, `NotifyReturn`,
 `NotifyPublish`, `NotifyConfirm`; state — `Name()`, `Queue()`, `Channel() *SafeBaseChan`,

@@ -6,9 +6,9 @@
 | File | Build tag | Role |
 |---|---|---|
 | `trace_handler.go` | none (always compiled) | Event model, validator types, channel-key constants, consumer harness `ConsumeTracesContext` |
-| `trace_parameters.go` | none (always compiled) | The 18 `Params*` payload structs |
-| `trace_params_nop.go` | `//go:build !test_env` | The 24 trace functions as empty no-op bodies (production build) |
-| `trace_params_testing.go` | `//go:build test_env` | The 24 trace functions as channel emitters (test build) |
+| `trace_parameters.go` | none (always compiled) | The 17 `Params*` payload structs |
+| `trace_params_nop.go` | `//go:build !test_env` | The 23 trace functions as empty no-op bodies (production build) |
+| `trace_params_testing.go` | `//go:build test_env` | The 23 trace functions as channel emitters (test build) |
 
 ## Overview
 
@@ -85,7 +85,7 @@ in a fresh `context.Background()` under the two keys above, wraps it with
 `context.WithCancel`, launches the unexported `doConsumeTraces` goroutine, and returns
 the cancelable context plus its `CancelFunc`.
 
-### Payload structs (`trace_parameters.go`, always compiled — 18 total)
+### Payload structs (`trace_parameters.go`, always compiled — 17 total)
 
 | Struct | Fields |
 |---|---|
@@ -95,7 +95,6 @@ the cancelable context plus its `CancelFunc`.
 | `ParamsQueueDeclare` | `Name string`; `Durable`, `AutoDelete`, `Exclusive`, `NoWait bool`; `Args amqp.Table` |
 | `ParamsQueueBind` | `Queue`, `Key`, `Exchange string`; `NoWait bool`; `Args amqp.Table` |
 | `ParamsExchangeBind` | `Destination`, `Key`, `Source string`; `NoWait bool`; `Args amqp.Table` |
-| `ParamsQueueInspect` | `Name string` |
 | `ParamsPublishWithContext` | `Exchange`, `Key string`; `Mandatory`, `Immediate bool`; `Msg amqp.Publishing` |
 | `ParamsQueuePurge` | `Queue string`; `NoWait bool` |
 | `ParamsQueueDelete` | `Queue string`; `IfUnused`, `IfEmpty`, `NoWait bool` |
@@ -106,7 +105,7 @@ the cancelable context plus its `CancelFunc`.
 | `ParamsRecover` | `Requeue bool` |
 | `ParamsGet` | `Queue string`; `AutoAck bool` |
 
-### Trace functions (24; identical signatures in both build modes, behavior differs)
+### Trace functions (23; identical signatures in both build modes, behavior differs)
 
 Every function takes `ctx context.Context` first, then mirrors the parameters of the
 corresponding `amqp091-go` channel method:
@@ -129,7 +128,6 @@ func QueueBind(ctx context.Context, queue, key, exchange string, noWait bool, ar
 func QueueDeclare(ctx context.Context, name string, durable, autoDelete, exclusive, noWait bool, args amqp.Table)
 func QueueDeclarePassive(ctx context.Context, name string, durable, autoDelete, exclusive, noWait bool, args amqp.Table)
 func QueueDelete(ctx context.Context, name string, ifUnused, ifEmpty, noWait bool)
-func QueueInspect(ctx context.Context, name string)
 func QueuePurge(ctx context.Context, name string, noWait bool)
 func QueueUnbind(ctx context.Context, name, key, exchange string, args amqp.Table)
 func Recover(ctx context.Context, requeue bool)
@@ -160,7 +158,6 @@ must match on these exact `Name` and `Tag` values):
 | `QueueDeclare` | `QueueDeclare` | `name` | `ParamsQueueDeclare` |
 | `QueueDeclarePassive` | `QueueDeclarePassive` | `name` | `ParamsQueueDeclare` *(reused)* |
 | `QueueDelete` | `QueueDelete` | `name` | `ParamsQueueDelete` |
-| `QueueInspect` | `QueueInspect` | `name` | `ParamsQueueInspect` |
 | `QueuePurge` | `QueuePurge` | `name` | `ParamsQueuePurge` |
 | `QueueUnbind` | `QueueUnbind` | `name` | `ParamsQueueBind` *(reused; `NoWait` left at zero value `false`)* |
 | `Recover` | `Recover` | *(empty)* | `ParamsRecover` |
@@ -175,7 +172,7 @@ must match on these exact `Name` and `Tag` values):
 ## Invariants
 
 1. **Compile-time gating.** Exactly one of `trace_params_nop.go` / `trace_params_testing.go`
-   is compiled (`!test_env` / `test_env`). The 24 function signatures are identical in
+   is compiled (`!test_env` / `test_env`). The 23 function signatures are identical in
    both files, so all call sites compile unchanged.
 2. **Zero overhead in production.** Without `test_env`, every trace function body is
    empty; there are no channel operations, no allocations, and no context lookups.

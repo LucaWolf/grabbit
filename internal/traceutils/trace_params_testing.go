@@ -260,20 +260,6 @@ func QueueDelete(ctx context.Context, name string, ifUnused, ifEmpty, noWait boo
 	}
 }
 
-func QueueInspect(ctx context.Context, name string) {
-	p := ParamsTrace{
-		Name: "QueueInspect",
-		Tag:  name,
-		Value: ParamsQueueInspect{
-			name,
-		},
-	}
-	// not all tests want to use the channel
-	if paramsCh := ctx.Value(TraceChannelParamsName); paramsCh != nil {
-		paramsCh.(chan ParamsTrace) <- p
-	}
-}
-
 func QueuePurge(ctx context.Context, name string, noWait bool) {
 	p := ParamsTrace{
 		Name: "QueuePurge",
